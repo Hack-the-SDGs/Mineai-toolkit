@@ -1,0 +1,32 @@
+[project]
+name = "mineai-toolkit"
+version = "0.1.0"
+description = "An MCP server exposing the minethon Mineflayer bot as model-callable tools."
+authors = [{ name = "reep_c", email = "reep_c@outlook.com" }]
+requires-python = ">=3.14,<4.0.0"
+dependencies = [
+    "mcp (>=1.28.0,<2.0.0)",
+    "fastmcp (>=3.4.2,<4.0.0)",
+    "anyio (>=4.0.0,<5.0.0)",
+    "minethon",
+]
+
+[project.scripts]
+mineai-mcp = "main:main"
+
+[tool.poetry.dependencies]
+# minethon (the Mineflayer SDK) lives in the sibling folder; develop=true so
+# edits there are picked up without reinstalling.
+minethon = { path = "../minethon", develop = true }
+
+[tool.poetry]
+# Flat layout: server.py / main.py are top-level modules, tools/ is a package.
+packages = [
+    { include = "tools" },
+    { include = "server.py" },
+    { include = "main.py" },
+]
+
+[build-system]
+requires = ["poetry-core>=2.0.0,<3.0.0"]
+build-backend = "poetry.core.masonry.api"
