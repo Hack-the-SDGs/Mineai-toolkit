@@ -14,27 +14,33 @@ def register(mcp: FastMCP) -> None:
     """Register interaction tools on ``mcp``."""
 
     @mcp.tool
-    async def hold(name: str) -> str:
+    async def hold(name: str, bot_name: str | None = None) -> str:
         """Equip the item named ``name`` from inventory; True on success."""
-        return await call("hold", name)
+        return await call("hold", name, bot_name=bot_name)
 
     @mcp.tool
-    async def dig() -> str:
+    async def dig(bot_name: str | None = None) -> str:
         """Dig the targeted block; returns 'coords, name' or 'none'."""
-        return await call("dig")
+        return await call("dig", bot_name=bot_name)
 
     @mcp.tool
-    async def place() -> str:
+    async def place(bot_name: str | None = None) -> str:
         """Place the held block against the targeted face; 'coords, name' or 'none'."""
-        return await call("place")
+        return await call("place", bot_name=bot_name)
 
     @mcp.tool
-    async def use() -> str:
+    async def use(bot_name: str | None = None) -> str:
         """Use/activate the held item; True on success."""
-        return await call("use")
+        return await call("use", bot_name=bot_name)
 
     @mcp.tool
-    async def chat(message: str) -> str:
+    async def chat(message: str, bot_name: str | None = None) -> str:
         """Send a chat message to the server."""
-        await call("chat", message)
+        await call("chat", message, bot_name=bot_name)
         return "sent"
+
+    @mcp.tool
+    async def set_height(level: int, bot_name: str | None = None) -> str:
+        """Set bot size level from 1 to 5."""
+        await call("set_height", level, bot_name=bot_name)
+        return "set"

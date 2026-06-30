@@ -23,6 +23,9 @@ minethon = { path = "../minethon", develop = true }
 # Flat layout: server.py / main.py are top-level modules, tools/ is a package.
 packages = [
     { include = "tools" },
+    { include = "bot_manager.py" },
+    { include = "bot_session.py" },
+    { include = "control_api.py" },
     { include = "server.py" },
     { include = "main.py" },
 ]
