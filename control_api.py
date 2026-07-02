@@ -5,11 +5,14 @@ from __future__ import annotations
 import json
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 from threading import Thread
 from typing import Any
 from urllib.parse import unquote, urlparse
 
 from bot_manager import manager
+
+STATIC_DIR = Path(__file__).with_name("static")
 
 
 class MineAIControlServer:
@@ -42,6 +45,9 @@ class _Handler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:  # noqa: N802
         try:
             path = self._path_parts()
+            if path == [] or path == ["index.html"]:
+                self._send_static("index.html")
+                return
             if path == ["health"]:
                 self._send_json(
                     {
@@ -137,9 +143,18 @@ class _Handler(BaseHTTPRequestHandler):
         self.send_response(status)
         self.send_header("content-type", "application/json; charset=utf-8")
         self.send_header("content-length", str(len(data)))
-        self.send_header("access-control-allow-origin", "*")
-        self.send_header("access-control-allow-methods", "GET,POST,DELETE,OPTIONS")
-        self.send_header("access-control-allow-headers", "content-type")
+        self.end_headers()
+        self.wfile.write(data)
+
+    def _send_static(self, filename: str) -> None:
+        file_path = (STATIC_DIR / filename).resolve()
+        if STATIC_DIR not in file_path.parents or not file_path.is_file():
+            self._not_found()
+            return
+        data = file_path.read_bytes()
+        self.send_response(HTTPStatus.OK)
+        self.send_header("content-type", "text/html; charset=utf-8")
+        self.send_header("content-length", str(len(data)))
         self.end_headers()
         self.wfile.write(data)
 
