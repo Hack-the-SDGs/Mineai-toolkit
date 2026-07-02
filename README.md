@@ -3,21 +3,31 @@ MCP Server for interact with minecraft.
 
 ## Runtime shape
 
-Starting the MCP server also starts a local bot lifecycle control API by
-default:
+Starting the MCP server also starts the user-facing bot lifecycle control UI
+and opens it in the default browser:
 
 ```bash
 mineai-mcp
 ```
 
-The control API listens on:
+The control UI and its JSON API listen on:
 
 ```text
 http://127.0.0.1:8765
 ```
 
-This does not open a browser window yet. It gives any future UI a stable API
-for creating, selecting, inspecting, and closing bots. Disable it with:
+The UI is for **the user** to create, select, inspect, and close bots. The
+model only drives whichever bot is active — it cannot create or close bots.
+Because the MCP server auto-opens the UI on start, students don't need any
+extra step: launching the client (e.g. opencode) brings the panel up.
+
+Keep the control server running but stop it from opening a browser tab:
+
+```bash
+MINEAI_OPEN_UI=0 mineai-mcp
+```
+
+Disable the control server (and UI) entirely:
 
 ```bash
 MINEAI_CONTROL_API=0 mineai-mcp
@@ -28,6 +38,10 @@ Change the bind address with:
 ```bash
 MINEAI_CONTROL_HOST=127.0.0.1 MINEAI_CONTROL_PORT=8765 mineai-mcp
 ```
+
+If the port is already taken (e.g. a second client window on the same
+machine), the MCP server logs a note and keeps running without a second UI
+instead of crashing.
 
 ## Control API
 
