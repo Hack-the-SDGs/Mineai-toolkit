@@ -1,0 +1,482 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>MineAI · Bot Control</title>
+    <style>
+      :root {
+        --bg: #0f1216;
+        --panel: #171b21;
+        --panel-2: #1e242c;
+        --border: #2a313b;
+        --text: #e6eaef;
+        --muted: #8b95a3;
+        --accent: #4ea1ff;
+        --green: #3fb950;
+        --amber: #d29922;
+        --red: #f85149;
+        --radius: 12px;
+        --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 8px 24px rgba(0, 0, 0, 0.25);
+        color-scheme: dark;
+      }
+      * { box-sizing: border-box; }
+      html, body { margin: 0; height: 100%; }
+      body {
+        background: var(--bg);
+        color: var(--text);
+        font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+          Helvetica, Arial, sans-serif;
+        -webkit-font-smoothing: antialiased;
+      }
+      .wrap { max-width: 960px; margin: 0 auto; padding: 28px 20px 64px; }
+
+      header.top {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 16px;
+        margin-bottom: 24px;
+      }
+      .brand { display: flex; align-items: center; gap: 12px; }
+      .logo {
+        width: 34px; height: 34px; border-radius: 9px;
+        background: linear-gradient(135deg, #4ea1ff, #2d6fd6);
+        display: grid; place-items: center;
+        font-size: 18px; box-shadow: var(--shadow);
+      }
+      .brand h1 { font-size: 17px; margin: 0; letter-spacing: 0.2px; }
+      .brand p { margin: 0; color: var(--muted); font-size: 12px; }
+
+      .server-state {
+        display: flex; align-items: center; gap: 8px;
+        background: var(--panel); border: 1px solid var(--border);
+        padding: 8px 12px; border-radius: 999px; font-size: 12.5px;
+      }
+      .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--muted); }
+      .dot.up { background: var(--green); box-shadow: 0 0 0 3px rgba(63,185,80,.15); }
+      .dot.down { background: var(--red); box-shadow: 0 0 0 3px rgba(248,81,73,.15); }
+
+      .card {
+        background: var(--panel);
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        box-shadow: var(--shadow);
+      }
+      .card + .card { margin-top: 18px; }
+      .card > .card-head {
+        padding: 14px 18px; border-bottom: 1px solid var(--border);
+        display: flex; align-items: center; justify-content: space-between;
+      }
+      .card > .card-head h2 { margin: 0; font-size: 14px; font-weight: 600; }
+      .card > .card-body { padding: 18px; }
+
+      /* create form */
+      form.create { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+      .field { display: flex; flex-direction: column; gap: 6px; }
+      .field.full { grid-column: 1 / -1; }
+      label { font-size: 12px; color: var(--muted); }
+      label .hint { color: #5f6b7a; }
+      input[type="text"], input[type="number"] {
+        background: var(--panel-2); border: 1px solid var(--border);
+        color: var(--text); border-radius: 8px; padding: 9px 11px; font-size: 13.5px;
+        outline: none; transition: border-color .12s, box-shadow .12s;
+      }
+      input:focus {
+        border-color: var(--accent);
+        box-shadow: 0 0 0 3px rgba(78,161,255,.15);
+      }
+      .adv-toggle {
+        background: none; border: none; color: var(--accent);
+        font-size: 12.5px; cursor: pointer; padding: 0;
+      }
+      .adv { display: none; grid-column: 1 / -1; grid-template-columns: 1fr 1fr; gap: 14px; }
+      .adv.open { display: grid; }
+      .row-inline { display: flex; align-items: center; gap: 8px; }
+      .row-inline label { color: var(--text); font-size: 13px; }
+
+      .btn {
+        border: 1px solid var(--border); background: var(--panel-2);
+        color: var(--text); border-radius: 8px; padding: 9px 14px;
+        font-size: 13px; font-weight: 500; cursor: pointer;
+        transition: background .12s, border-color .12s, opacity .12s;
+      }
+      .btn:hover { background: #262d37; }
+      .btn:disabled { opacity: .5; cursor: not-allowed; }
+      .btn.primary { background: var(--accent); border-color: var(--accent); color: #06121f; }
+      .btn.primary:hover { background: #6bb1ff; }
+      .btn.ghost { background: transparent; }
+      .btn.danger { color: var(--red); border-color: #3a2222; }
+      .btn.danger:hover { background: #2a1a1a; }
+      .btn.small { padding: 6px 10px; font-size: 12px; }
+
+      /* bot list */
+      .bots { display: flex; flex-direction: column; gap: 12px; }
+      .bot {
+        background: var(--panel-2); border: 1px solid var(--border);
+        border-radius: 10px; padding: 14px 16px;
+        display: flex; align-items: flex-start; justify-content: space-between; gap: 16px;
+      }
+      .bot.is-active { border-color: var(--accent); box-shadow: 0 0 0 1px rgba(78,161,255,.35); }
+      .bot .id { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+      .bot .name-row { display: flex; align-items: center; gap: 9px; flex-wrap: wrap; }
+      .bot .name { font-size: 15px; font-weight: 600; }
+      .bot .user { color: var(--muted); font-size: 12.5px; }
+
+      .badge {
+        font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 999px;
+        border: 1px solid var(--border); color: var(--muted); white-space: nowrap;
+      }
+      .badge.active { color: var(--accent); border-color: rgba(78,161,255,.4); background: rgba(78,161,255,.1); }
+      .badge.online { color: var(--green); border-color: rgba(63,185,80,.4); background: rgba(63,185,80,.1); }
+      .badge.offline { color: var(--red); border-color: rgba(248,81,73,.4); background: rgba(248,81,73,.1); }
+      .badge.pending { color: var(--amber); border-color: rgba(210,153,34,.4); background: rgba(210,153,34,.1); }
+
+      .stats { display: flex; gap: 18px; margin-top: 8px; flex-wrap: wrap; }
+      .stat { display: flex; flex-direction: column; }
+      .stat .k { font-size: 10.5px; color: var(--muted); text-transform: uppercase; letter-spacing: .5px; }
+      .stat .v { font-size: 13px; font-variant-numeric: tabular-nums; }
+      .why { margin-top: 8px; font-size: 12.5px; color: var(--amber); }
+
+      .bot .actions { display: flex; flex-direction: column; gap: 8px; flex-shrink: 0; }
+
+      .empty { text-align: center; color: var(--muted); padding: 30px 10px; }
+      .empty .big { font-size: 15px; color: var(--text); margin-bottom: 4px; }
+
+      /* toast */
+      .toasts {
+        position: fixed; right: 18px; bottom: 18px; display: flex;
+        flex-direction: column; gap: 10px; z-index: 50; max-width: 340px;
+      }
+      .toast {
+        background: var(--panel); border: 1px solid var(--border);
+        border-left: 3px solid var(--accent); border-radius: 8px;
+        padding: 11px 14px; font-size: 13px; box-shadow: var(--shadow);
+        animation: slide .18s ease-out;
+      }
+      .toast.err { border-left-color: var(--red); }
+      .toast .t { font-weight: 600; margin-bottom: 2px; }
+      .toast .m { color: var(--muted); font-size: 12.5px; word-break: break-word; }
+      @keyframes slide { from { transform: translateY(8px); opacity: 0; } }
+
+      .muted { color: var(--muted); }
+      @media (max-width: 620px) {
+        form.create, .adv { grid-template-columns: 1fr; }
+        .bot { flex-direction: column; }
+        .bot .actions { flex-direction: row; }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <header class="top">
+        <div class="brand">
+          <div class="logo">⛏️</div>
+          <div>
+            <h1>MineAI · Bot Control</h1>
+            <p>You own the bots. The model only drives the active one.</p>
+          </div>
+        </div>
+        <div class="server-state">
+          <span id="server-dot" class="dot"></span>
+          <span id="server-label">connecting…</span>
+        </div>
+      </header>
+
+      <section class="card">
+        <div class="card-head"><h2>Create a bot</h2></div>
+        <div class="card-body">
+          <form class="create" id="create-form">
+            <div class="field">
+              <label for="f-name">Name <span class="hint">· required, unique</span></label>
+              <input type="text" id="f-name" placeholder="builder" autocomplete="off" />
+            </div>
+            <div class="field">
+              <label for="f-account">Account shorthand <span class="hint">· optional</span></label>
+              <input type="text" id="f-account" placeholder="g_swim" autocomplete="off" />
+            </div>
+
+            <div class="field full">
+              <button type="button" class="adv-toggle" id="adv-toggle">▸ Advanced connection options</button>
+            </div>
+
+            <div class="adv" id="adv">
+              <div class="field">
+                <label for="f-host">Host</label>
+                <input type="text" id="f-host" placeholder="localhost" autocomplete="off" />
+              </div>
+              <div class="field">
+                <label for="f-port">Port</label>
+                <input type="number" id="f-port" placeholder="25565" />
+              </div>
+              <div class="field">
+                <label for="f-username">Username</label>
+                <input type="text" id="f-username" placeholder="builder" autocomplete="off" />
+              </div>
+              <div class="field">
+                <label for="f-version">Version <span class="hint">· optional</span></label>
+                <input type="text" id="f-version" placeholder="1.20.4" autocomplete="off" />
+              </div>
+              <div class="field">
+                <label for="f-height">Height <span class="hint">· optional</span></label>
+                <input type="number" id="f-height" placeholder="—" />
+              </div>
+              <div class="field">
+                <div class="row-inline" style="margin-top: 22px;">
+                  <input type="checkbox" id="f-wait" checked />
+                  <label for="f-wait">Wait for spawn before returning</label>
+                </div>
+              </div>
+            </div>
+
+            <div class="field full" style="flex-direction: row; justify-content: flex-end;">
+              <button type="submit" class="btn primary" id="create-btn">Create bot</button>
+            </div>
+          </form>
+        </div>
+      </section>
+
+      <section class="card">
+        <div class="card-head">
+          <h2>Bots</h2>
+          <button class="btn ghost small" id="refresh-btn">↻ Refresh</button>
+        </div>
+        <div class="card-body">
+          <div class="bots" id="bots"></div>
+        </div>
+      </section>
+    </div>
+
+    <div class="toasts" id="toasts"></div>
+
+    <script>
+      const API = ""; // same-origin
+      const $ = (id) => document.getElementById(id);
+      let activeName = null;
+
+      // ---- api helpers ----
+      async function api(path, opts = {}) {
+        const res = await fetch(API + path, {
+          headers: { "content-type": "application/json" },
+          ...opts,
+        });
+        let data = null;
+        try { data = await res.json(); } catch (_) {}
+        if (!res.ok) {
+          const msg = (data && (data.message || data.error)) || res.statusText;
+          throw new Error(msg);
+        }
+        return data;
+      }
+
+      // ---- toasts ----
+      function toast(title, message, isErr = false) {
+        const el = document.createElement("div");
+        el.className = "toast" + (isErr ? " err" : "");
+        el.innerHTML =
+          `<div class="t"></div><div class="m"></div>`;
+        el.querySelector(".t").textContent = title;
+        el.querySelector(".m").textContent = message || "";
+        $("toasts").appendChild(el);
+        setTimeout(() => el.remove(), isErr ? 6000 : 3500);
+      }
+
+      // ---- rendering ----
+      function statusBadge(b) {
+        if (b.closed) return `<span class="badge offline">closed</span>`;
+        if (b.connected && b.spawned) return `<span class="badge online">online</span>`;
+        if (b.connected && !b.spawned) return `<span class="badge pending">connecting</span>`;
+        return `<span class="badge offline">disconnected</span>`;
+      }
+
+      function num(v) {
+        return typeof v === "number" ? v.toFixed(1) : "—";
+      }
+
+      function pos(p) {
+        if (!p || typeof p !== "object") return "—";
+        const f = (n) => (typeof n === "number" ? Math.round(n) : "?");
+        return `${f(p.x)}, ${f(p.y)}, ${f(p.z)}`;
+      }
+
+      function botCard(b) {
+        const isActive = b.active;
+        const why =
+          b.kicked_reason ? `Kicked: ${b.kicked_reason}` :
+          b.last_error ? `Error: ${b.last_error}` :
+          (b.closed && b.end_reason) ? `Ended: ${b.end_reason}` : "";
+
+        const canActivate = !b.closed && !isActive;
+        const stats = (b.connected && b.spawned)
+          ? `<div class="stats">
+               <div class="stat"><span class="k">Health</span><span class="v">${num(b.health)}</span></div>
+               <div class="stat"><span class="k">Food</span><span class="v">${num(b.food)}</span></div>
+               <div class="stat"><span class="k">Position</span><span class="v">${pos(b.position)}</span></div>
+             </div>`
+          : "";
+
+        return `
+          <div class="bot ${isActive ? "is-active" : ""}">
+            <div class="id">
+              <div class="name-row">
+                <span class="name"></span>
+                ${isActive ? `<span class="badge active">active</span>` : ""}
+                ${statusBadge(b)}
+              </div>
+              <span class="user">${b.username ? "@" + escapeHtml(b.username) : (b.account ? "account: " + escapeHtml(b.account) : "—")}</span>
+              ${stats}
+              ${why ? `<div class="why"></div>` : ""}
+            </div>
+            <div class="actions">
+              <button class="btn small activate-btn" data-name="${encodeURIComponent(b.name)}" ${canActivate ? "" : "disabled"}>
+                ${isActive ? "Active" : "Set active"}
+              </button>
+              <button class="btn small danger close-btn" data-name="${encodeURIComponent(b.name)}" ${b.closed ? "disabled" : ""}>
+                ${b.closed ? "Closed" : "Close"}
+              </button>
+            </div>
+          </div>`;
+      }
+
+      function escapeHtml(s) {
+        return String(s).replace(/[&<>"']/g, (c) =>
+          ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+      }
+
+      function renderBots(bots) {
+        const host = $("bots");
+        if (!bots || bots.length === 0) {
+          host.innerHTML = `<div class="empty">
+            <div class="big">No bots yet</div>
+            <div>Create one above. The model can only act once a bot is active.</div>
+          </div>`;
+          return;
+        }
+        // sort: active first, then open, then closed
+        bots.sort((a, b) =>
+          (b.active - a.active) || (a.closed - b.closed) || a.name.localeCompare(b.name));
+        host.innerHTML = bots.map(botCard).join("");
+
+        // fill text safely + wire buttons
+        const cards = host.querySelectorAll(".bot");
+        bots.forEach((b, i) => {
+          const card = cards[i];
+          card.querySelector(".name").textContent = b.name;
+          const whyEl = card.querySelector(".why");
+          if (whyEl) {
+            whyEl.textContent =
+              b.kicked_reason ? "Kicked: " + b.kicked_reason :
+              b.last_error ? "Error: " + b.last_error :
+              (b.closed && b.end_reason) ? "Ended: " + b.end_reason : "";
+          }
+        });
+
+        host.querySelectorAll(".activate-btn").forEach((btn) => {
+          if (btn.disabled) return;
+          btn.onclick = () => activate(decodeURIComponent(btn.dataset.name));
+        });
+        host.querySelectorAll(".close-btn").forEach((btn) => {
+          if (btn.disabled) return;
+          btn.onclick = () => closeBot(decodeURIComponent(btn.dataset.name));
+        });
+      }
+
+      function setServer(up, extra) {
+        $("server-dot").className = "dot " + (up ? "up" : "down");
+        $("server-label").textContent = up
+          ? `online${extra ? " · " + extra : ""}`
+          : "server offline";
+      }
+
+      // ---- actions ----
+      async function refresh() {
+        try {
+          const data = await api("/health");
+          activeName = data.active_bot;
+          const bots = data.bots || [];
+          const online = bots.filter((b) => b.connected && !b.closed).length;
+          setServer(true, `${bots.length} bot${bots.length === 1 ? "" : "s"}, ${online} online`);
+          renderBots(bots);
+        } catch (e) {
+          setServer(false);
+        }
+      }
+
+      async function activate(name) {
+        try {
+          await api(`/bots/${encodeURIComponent(name)}/activate`, { method: "POST" });
+          toast("Active bot set", name);
+          refresh();
+        } catch (e) {
+          toast("Could not set active bot", e.message, true);
+        }
+      }
+
+      async function closeBot(name) {
+        if (!confirm(`Close bot "${name}"? This disconnects it from the server.`)) return;
+        try {
+          await api(`/bots/${encodeURIComponent(name)}`, { method: "DELETE" });
+          toast("Bot closed", name);
+          refresh();
+        } catch (e) {
+          toast("Could not close bot", e.message, true);
+        }
+      }
+
+      function val(id) {
+        const v = $(id).value.trim();
+        return v === "" ? null : v;
+      }
+
+      async function createBot(ev) {
+        ev.preventDefault();
+        const name = val("f-name");
+        if (!name) { toast("Name required", "Give the bot a unique name.", true); return; }
+
+        const body = { name, wait_spawn: $("f-wait").checked };
+        const account = val("f-account");
+        if (account) body.account = account;
+
+        const options = {};
+        if (val("f-host")) options.host = val("f-host");
+        if (val("f-port")) options.port = Number(val("f-port"));
+        if (val("f-username")) options.username = val("f-username");
+        if (val("f-version")) options.version = val("f-version");
+        if (Object.keys(options).length) body.options = options;
+        if (val("f-height")) body.height = Number(val("f-height"));
+
+        const btn = $("create-btn");
+        btn.disabled = true;
+        btn.textContent = "Creating…";
+        try {
+          const created = await api("/bots", {
+            method: "POST",
+            body: JSON.stringify(body),
+          });
+          toast("Bot created", created.name || name);
+          $("create-form").reset();
+          $("f-wait").checked = true;
+          refresh();
+        } catch (e) {
+          toast("Could not create bot", e.message, true);
+        } finally {
+          btn.disabled = false;
+          btn.textContent = "Create bot";
+        }
+      }
+
+      // ---- wire up ----
+      $("adv-toggle").onclick = () => {
+        const adv = $("adv");
+        const open = adv.classList.toggle("open");
+        $("adv-toggle").textContent =
+          (open ? "▾" : "▸") + " Advanced connection options";
+      };
+      $("create-form").addEventListener("submit", createBot);
+      $("refresh-btn").onclick = refresh;
+
+      refresh();
+      setInterval(refresh, 4000);
+    </script>
+  </body>
+</html>
