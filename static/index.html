@@ -214,6 +214,10 @@
                 <input type="text" id="f-username" placeholder="builder" autocomplete="off" />
               </div>
               <div class="field">
+                <label for="f-password">Password <span class="hint">· online-mode servers</span></label>
+                <input type="password" id="f-password" placeholder="—" autocomplete="off" />
+              </div>
+              <div class="field">
                 <label for="f-version">Version <span class="hint">· optional</span></label>
                 <input type="text" id="f-version" placeholder="1.20.4" autocomplete="off" />
               </div>
@@ -441,6 +445,7 @@
         if (val("f-host")) options.host = val("f-host");
         if (val("f-port")) options.port = Number(val("f-port"));
         if (val("f-username")) options.username = val("f-username");
+        if (val("f-password")) options.password = val("f-password");
         if (val("f-version")) options.version = val("f-version");
         if (Object.keys(options).length) body.options = options;
         if (val("f-height")) body.height = Number(val("f-height"));
