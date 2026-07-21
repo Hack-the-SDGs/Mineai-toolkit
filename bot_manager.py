@@ -7,6 +7,7 @@ from a worker thread.
 
 from __future__ import annotations
 
+import os
 import time
 from collections.abc import Iterable
 from dataclasses import dataclass, field
@@ -18,6 +19,22 @@ from minethon._bridge import get_mineflayer
 from minethon._event_login import resolve_account
 
 CreateOptions = dict[str, Any]
+
+# Dev/test fallback: MC_* environment variables (loaded from a .env file by
+# main.py) supply connection defaults when no account shorthand is used. Lets a
+# developer keep server-wide settings in one file and type only a username and
+# password in the UI. Explicit options always win; the shorthand path ignores
+# these entirely so student machines behave identically with or without a .env.
+_ENV_OPTION_KEYS: dict[str, str] = {
+    "MC_HOST": "host",
+    "MC_PORT": "port",
+    "MC_USERNAME": "username",
+    "MC_PASSWORD": "password",
+    "MC_AUTH": "auth",
+    "MC_AUTH_SERVER": "auth_server",
+    "MC_SESSION_SERVER": "session_server",
+    "MC_VERSION": "version",
+}
 
 
 @dataclass
@@ -266,7 +283,7 @@ class BotManager:
     @staticmethod
     def _resolve_options(account: str | None, options: CreateOptions) -> CreateOptions:
         if account is None:
-            return dict(options)
+            return {**_env_options(), **options}
         return {**resolve_account(account), **options}
 
     @staticmethod
@@ -306,6 +323,28 @@ class _LifecycleEvents(EventAdaptor):
 
     def on_error(self, error: object) -> None:
         self._manager.mark_error(self._name, error)
+
+
+def _env_options() -> CreateOptions:
+    """Read connection defaults from MC_* environment variables.
+
+    Blank values are skipped so an unfilled line in .env behaves the same as a
+    missing one. A non-numeric MC_PORT is ignored rather than fatal — a typo
+    there should surface as a connection failure, not a server crash.
+    """
+    options: CreateOptions = {}
+    for env_name, key in _ENV_OPTION_KEYS.items():
+        raw = (os.environ.get(env_name) or "").strip()
+        if not raw:
+            continue
+        if key == "port":
+            try:
+                options[key] = int(raw)
+            except ValueError:
+                continue
+        else:
+            options[key] = raw
+    return options
 
 
 def _to_camel(snake: str) -> str:

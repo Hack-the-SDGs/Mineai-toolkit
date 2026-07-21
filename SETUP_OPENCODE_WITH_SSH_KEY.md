@@ -187,14 +187,14 @@ opencode reads a config file named `opencode.json`. You can put it either:
 - **Per project:** `opencode.json` in the folder you open with opencode, or
 - **Global:** `~/.config/opencode/opencode.json` (applies everywhere).
 
-A ready-to-edit template ships with this repo: [`example_opencode.json`](example_opencode.json).
-Copy it and fill in the two placeholders.
+A ready-to-edit template ships with this repo: [`opencode.jsonc`](opencode.jsonc).
+Copy it and replace its placeholders.
 
 **Global setup (recommended for the camp):**
 
 ```bash
 mkdir -p ~/.config/opencode
-cp example_opencode.json ~/.config/opencode/opencode.json
+cp opencode.jsonc ~/.config/opencode/opencode.json
 ```
 
 Then open `~/.config/opencode/opencode.json` and edit it to look like this:
@@ -252,7 +252,101 @@ What to change / know:
 
 ---
 
-## 5. Run it
+## 5. Prepare the Minecraft side (dev / internal test)
+
+Steps 1–4 give the model its tools. This step gives it something to log into.
+
+> **Camp day vs. dev test.** On camp machines, staff run
+> `minethon/pc_setup/setup.sh` once, which writes `~/.htsdg.json` (just
+> `{"group": 3, "computer": 24}`). Students then type only a **Name** and an
+> **Account shorthand** like `g_swim` in the bot panel, and the username,
+> password, host, and auth URLs are all derived for them.
+>
+> For **internal testing** you don't have that file and don't need it. You
+> register a real account and put its credentials in a `.env` instead. That's
+> what the rest of this section covers.
+
+### 5a. Install HMCL (the Minecraft launcher)
+
+You need an actual Minecraft client to join the server and *watch* the bot —
+the MCP server only drives the bot, it doesn't render anything.
+
+Use the camp's fork, which is preconfigured for our auth server:
+
+**<https://github.com/Hack-the-SDGs/HMCL>**
+
+Download the launcher from that repo's Releases, install it, and confirm you can
+launch Minecraft and connect to `mc.ntust.camp:50213` as **yourself**. Do this
+before touching the bot — if your own client can't get in, the bot won't either,
+and you'll waste time debugging the wrong layer.
+
+### 5b. Register the bot's account
+
+The bot logs in as its **own account**, not yours. Two clients cannot share one
+username — they'll kick each other in a loop.
+
+Register at **<https://drash.ntust.camp/en/login>** and create an account for the
+bot (e.g. `devbot01`). Note the username and password; that's all you need.
+
+### 5c. Create your `.env`
+
+The file lives **next to `main.py`** in this project. A template ships with the
+repo — copy it and fill in the two credential lines:
+
+```bash
+cp .env.example .env
+```
+
+Where the values come from:
+
+| Key | Where it comes from |
+| --- | --- |
+| `MC_USERNAME` | the account you registered in 5b |
+| `MC_PASSWORD` | same |
+| `MC_HOST` | `mc.ntust.camp` |
+| `MC_PORT` | **`50213`** — not the default 25565 |
+| `MC_AUTH` | `mojang` (Drasl speaks the legacy Yggdrasil protocol) |
+| `MC_AUTH_SERVER` | `https://drasl.ntust.camp/auth` |
+| `MC_SESSION_SERVER` | `https://drasl.ntust.camp/session` |
+| `MC_VERSION` | `1.21.11` |
+
+Two things to know:
+
+- **No `set -a`, no `export`, no shell tricks.** The MCP server loads this file
+  itself at startup ([`main.py`](main.py) pins it to `mineai_toolkit/.env` by
+  absolute path, so it works no matter which folder opencode opened). You never
+  source it by hand.
+- **It's read once, at startup.** After editing `.env`, restart the MCP server —
+  in practice, quit and reopen opencode.
+
+> `.env` holds credentials. Keep it out of git; commit only `.env.example`.
+> (`minethon/examples/demos/drasl_auth/.env.example` is the equivalent template
+> for the standalone script path — same keys, except it's missing `MC_PORT`, so
+> add that one yourself if you use it.)
+
+### 5d. Create the bot
+
+Open the panel at <http://127.0.0.1:8765> and fill in:
+
+- **Name** — any unique local label (`test`, `devbot`). This is just a handle for
+  `set_active_bot` / close; it is **not** the Minecraft username.
+- **Account shorthand** — leave **blank** (that's the camp-day path).
+
+Everything under **Advanced connection options** can stay blank: with no
+shorthand, any field you leave empty falls back to the matching `MC_*` value
+from `.env`. Fill one in only to override for a single bot — handy when you want
+a second bot on a different account:
+
+- **Username** / **Password** — override just the identity, keep the server
+  settings from `.env`.
+
+Click **Create bot**. The request blocks until the bot has spawned, then the card
+appears with `connected: true` and a position. The password is stripped from all
+API responses, so it won't leak back through `/bots`.
+
+---
+
+## 6. Run it
 
 1. **Terminal A** — keep the tunnel open (from step 2):
 
@@ -268,13 +362,14 @@ What to change / know:
    - Select the model **NTUST LLM → Qwen3.6 27B UD-Q4_K_XL (remote)**
      (use the model picker in the app's UI).
    - opencode auto-launches the `mineai-toolkit` MCP server, which opens the bot
-     panel at <http://127.0.0.1:8765>. Create/select a bot there.
+     panel at <http://127.0.0.1:8765>. Create/select a bot there (step 5d).
    - Ask the model to do something with the bot to confirm the tools are wired
      up (e.g. "list the bots" or "walk the active bot to 100 64 100").
+   - Join the server yourself with HMCL to watch the bot move.
 
 ---
 
-## 6. Troubleshooting
+## 7. Troubleshooting
 
 | Symptom | Likely cause & fix |
 | --- | --- |
@@ -286,6 +381,13 @@ What to change / know:
 | `poetry: command not found` inside opencode | Use the absolute venv path in `command` (step 4, last bullet). |
 | Model id mismatch | Make the `models` key match what `/v1/models` returns. |
 | Bot panel didn't open | Set `MINEAI_OPEN_UI=1` (already in the template) or open <http://127.0.0.1:8765> manually. |
+| Bot creation: 「找不到本機識別檔」 | You used an **Account shorthand** without `~/.htsdg.json`. For dev test, leave that field blank and use `.env` (step 5c). |
+| Bot creation: 「找不到此任務」 | Wrong username/password, or the account doesn't exist. Re-check it at <https://drash.ntust.camp/en/login>. |
+| Bot connects to `localhost` instead of the camp server | `.env` isn't being read — it must be `mineai_toolkit/.env`, and the MCP server must have been restarted since you created it. |
+| Bot times out with no login error | Almost always `MC_PORT`. The camp server is on **50213**; the default is 25565. |
+| `Server version '…' is not supported` | `MC_VERSION` must be ≤ `1.21.11` (the newest version mineflayer 4.37 supports). |
+| Bot and your own client keep kicking each other | You're logged into both with the same account. Register a separate account for the bot (step 5b). |
+| Panel shows no bots although you just made one | A second opencode window spawned a second MCP server; the UI belongs to whichever process grabbed port 8765 first. Keep one window, or start extras with `MINEAI_CONTROL_API=0`. |
 
 ---
 
@@ -296,5 +398,8 @@ What to change / know:
 - opencode config: <https://opencode.ai/docs/config/>
 - opencode MCP servers: <https://opencode.ai/docs/mcp-servers/>
 - Poetry install: <https://python-poetry.org/docs/#installation>
-- This repo's config template: [`example_opencode.json`](example_opencode.json)
+- This repo's config template: [`opencode.jsonc`](opencode.jsonc)
+- Credentials template: [`.env.example`](.env.example)
 - Server / MCP tool reference: [`README.md`](README.md)
+- HMCL launcher (camp fork): <https://github.com/Hack-the-SDGs/HMCL>
+- Account registration (Drasl): <https://drash.ntust.camp/en/login>

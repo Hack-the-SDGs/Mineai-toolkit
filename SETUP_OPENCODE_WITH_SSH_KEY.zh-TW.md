@@ -181,14 +181,14 @@ opencode 會讀取一個叫 `opencode.json` 的設定檔。你可以把它放在
 - **專案層級：** 你用 opencode 開啟的那個資料夾裡的 `opencode.json`，或
 - **全域：** `~/.config/opencode/opencode.json`（到處都適用）。
 
-本 repo 附了一份可直接改的範本：[`example_opencode.json`](example_opencode.json)。
-複製它，然後填入兩個要替換的地方即可。
+本 repo 附了一份可直接改的範本：[`opencode.jsonc`](opencode.jsonc)。
+複製它，然後填入要替換的地方即可。
 
 **全域設定（營隊建議這樣做）：**
 
 ```bash
 mkdir -p ~/.config/opencode
-cp example_opencode.json ~/.config/opencode/opencode.json
+cp opencode.jsonc ~/.config/opencode/opencode.json
 ```
 
 接著打開 `~/.config/opencode/opencode.json`，改成像這樣：
@@ -245,7 +245,92 @@ cp example_opencode.json ~/.config/opencode/opencode.json
 
 ---
 
-## 5. 開始執行
+## 5. 準備 Minecraft 端（開發／內部測試）
+
+第 1～4 步讓模型拿到工具，這一步則是讓它有東西可以登入。
+
+> **營隊當天 vs. 開發測試。** 營隊電腦由工作人員跑一次
+> `minethon/pc_setup/setup.sh`，它會寫出 `~/.htsdg.json`（內容就只有
+> `{"group": 3, "computer": 24}`）。學員之後在機器人面板只要填 **Name** 和
+> **Account shorthand**（例如 `g_swim`），帳號、密碼、主機、認證網址就會自動推導出來。
+>
+> **內部測試**沒有那個檔案，也不需要它。你改成註冊一個真實帳號，把帳密放進
+> `.env`。以下就是在講這條路。
+
+### 5a. 安裝 HMCL（Minecraft 啟動器）
+
+你需要一個真正的 Minecraft 客戶端才能進伺服器**看**機器人——MCP 伺服器只負責
+操控機器人，它不會畫出任何畫面。
+
+請用營隊的 fork 版本，已經幫你設定好我們的認證伺服器：
+
+**<https://github.com/Hack-the-SDGs/HMCL>**
+
+到該 repo 的 Releases 下載啟動器、安裝，並確認你能用**自己的帳號**啟動 Minecraft
+並連上 `mc.ntust.camp:50213`。請先做完這件事再去弄機器人——如果你自己的客戶端都
+進不去，機器人一定也進不去，先確認可以省下找錯層級的時間。
+
+### 5b. 註冊機器人的帳號
+
+機器人是用**它自己的帳號**登入，不是你的。同一個帳號不能同時兩個客戶端登入，
+會互相把對方踢掉、無限循環。
+
+到 **<https://drash.ntust.camp/en/login>** 註冊一個給機器人用的帳號
+（例如 `devbot01`）。記下帳號與密碼，需要的就只有這兩個。
+
+### 5c. 建立你的 `.env`
+
+這個檔案要放在**跟 `main.py` 同一層**。repo 附了範本，複製後填入兩行帳密即可：
+
+```bash
+cp .env.example .env
+```
+
+各欄位的來源：
+
+| 欄位 | 從哪裡來 |
+| --- | --- |
+| `MC_USERNAME` | 5b 註冊的帳號 |
+| `MC_PASSWORD` | 同上 |
+| `MC_HOST` | `mc.ntust.camp` |
+| `MC_PORT` | **`50213`** — 不是預設的 25565 |
+| `MC_AUTH` | `mojang`（Drasl 走的是舊版 Yggdrasil 協定） |
+| `MC_AUTH_SERVER` | `https://drasl.ntust.camp/auth` |
+| `MC_SESSION_SERVER` | `https://drasl.ntust.camp/session` |
+| `MC_VERSION` | `1.21.11` |
+
+兩個重點：
+
+- **不需要 `set -a`、不需要 `export`、不需要任何 shell 技巧。** MCP 伺服器啟動時
+  會自己讀這個檔（[`main.py`](main.py) 用絕對路徑鎖定 `mineai_toolkit/.env`，
+  所以不管 opencode 開的是哪個資料夾都讀得到）。你不用手動 source 它。
+- **它只在啟動時讀一次。** 改完 `.env` 之後要重啟 MCP 伺服器——實務上就是關掉
+  opencode 再開一次。
+
+> `.env` 裡有帳密，請不要 commit 進 git，只 commit `.env.example`。
+> （`minethon/examples/demos/drasl_auth/.env.example` 是獨立腳本那條路的對應範本，
+> 欄位一樣，但它少了 `MC_PORT`，用那條路要自己補上。）
+
+### 5d. 建立機器人
+
+打開面板 <http://127.0.0.1:8765>，填入：
+
+- **Name** — 任何不重複的本機標籤（`test`、`devbot`）。這只是給
+  `set_active_bot`／關閉用的代號，**不是** Minecraft 使用者名稱。
+- **Account shorthand** — **留空**（那是營隊當天用的）。
+
+**Advanced connection options** 底下全部可以留空：只要沒填 shorthand，任何空欄位
+都會自動用 `.env` 裡對應的 `MC_*` 值。只有想針對單一機器人覆蓋時才填——例如想再
+開第二隻用不同帳號的機器人：
+
+- **Username** / **Password** — 只覆蓋身分，伺服器設定仍沿用 `.env`。
+
+按 **Create bot**。這個請求會等到機器人 spawn 完才回應，接著卡片會顯示
+`connected: true` 和座標。密碼在所有 API 回應中都會被移除，不會從 `/bots` 洩漏出去。
+
+---
+
+## 6. 開始執行
 
 1. **終端機 A** — 保持通道開著（第 2 步的指令）：
 
@@ -261,13 +346,14 @@ cp example_opencode.json ~/.config/opencode/opencode.json
    - 選擇模型 **NTUST LLM → Qwen3.6 27B UD-Q4_K_XL (remote)**
      （用 App 介面上的模型選擇器）。
    - opencode 會自動啟動 `mineai-toolkit` MCP 伺服器，並開啟機器人面板
-     <http://127.0.0.1:8765>。在那裡建立／選擇一隻機器人。
+     <http://127.0.0.1:8765>。在那裡建立／選擇一隻機器人（第 5d 步）。
    - 請模型對機器人做點事來確認工具接好了（例如「列出所有機器人」或
      「讓目前的機器人走到 100 64 100」）。
+   - 用 HMCL 自己進伺服器，就能親眼看到機器人在動。
 
 ---
 
-## 6. 疑難排解
+## 7. 疑難排解
 
 | 症狀 | 可能原因與解法 |
 | --- | --- |
@@ -279,6 +365,13 @@ cp example_opencode.json ~/.config/opencode/opencode.json
 | opencode 裡出現 `poetry: command not found` | 在 `command` 用 venv 的絕對路徑（第 4 步最後一點）。 |
 | 模型 id 不一致 | 讓 `models` 的 key 跟 `/v1/models` 回報的一致。 |
 | 機器人面板沒開 | 設定 `MINEAI_OPEN_UI=1`（範本裡已經有）或手動開 <http://127.0.0.1:8765>。 |
+| 建立機器人時出現「找不到本機識別檔」 | 你填了 **Account shorthand** 但沒有 `~/.htsdg.json`。開發測試請把該欄留空，改用 `.env`（第 5c 步）。 |
+| 建立機器人時出現「找不到此任務」 | 帳號或密碼錯誤，或帳號不存在。到 <https://drash.ntust.camp/en/login> 重新確認。 |
+| 機器人連到 `localhost` 而不是營隊伺服器 | `.env` 沒被讀到——它必須放在 `mineai_toolkit/.env`，而且建立後要重啟過 MCP 伺服器。 |
+| 機器人一直逾時但沒有登入錯誤 | 幾乎都是 `MC_PORT`。營隊伺服器在 **50213**，預設值是 25565。 |
+| `Server version '…' is not supported` | `MC_VERSION` 必須 ≤ `1.21.11`（mineflayer 4.37 支援的最新版本）。 |
+| 機器人跟你自己的客戶端互踢 | 兩邊用同一個帳號登入。請幫機器人另外註冊一個帳號（第 5b 步）。 |
+| 剛建立的機器人在面板上看不到 | 開了第二個 opencode 視窗、啟動了第二個 MCP 伺服器；面板屬於先搶到 8765 埠的那個行程。只留一個視窗，或其他視窗用 `MINEAI_CONTROL_API=0` 啟動。 |
 
 ---
 
@@ -289,5 +382,8 @@ cp example_opencode.json ~/.config/opencode/opencode.json
 - opencode 設定：<https://opencode.ai/docs/config/>
 - opencode MCP 伺服器：<https://opencode.ai/docs/mcp-servers/>
 - Poetry 安裝：<https://python-poetry.org/docs/#installation>
-- 本 repo 的設定範本：[`example_opencode.json`](example_opencode.json)
+- 本 repo 的設定範本：[`opencode.jsonc`](opencode.jsonc)
+- 帳密範本：[`.env.example`](.env.example)
 - 伺服器／MCP 工具參考：[`README.md`](README.md)
+- HMCL 啟動器（營隊 fork）：<https://github.com/Hack-the-SDGs/HMCL>
+- 帳號註冊（Drasl）：<https://drash.ntust.camp/en/login>
