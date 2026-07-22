@@ -161,21 +161,38 @@ curl -sSL https://install.python-poetry.org | python3 -
 poetry install
 ```
 
-Sanity-check that the server command exists:
+Start the control service:
 
 ```bash
-poetry run mineai-mcp --help   # should start the MCP server (Ctrl+C to stop)
+poetry run mineai-control
 ```
 
-> On start, the server also opens the bot-control UI at
-> <http://127.0.0.1:8765>. That's expected — that panel is for **you** to
-> create/select/close bots. opencode/the model only drives the active bot.
+**Keep this terminal open**, like the SSH tunnel in step 2. It prints:
 
-You normally **don't** start `mineai-mcp` by hand — opencode launches it for you
-(next step). Note the **absolute path** of this project root, you'll need it:
+```text
+[mineai] control UI:   http://127.0.0.1:8765
+[mineai] MCP endpoint: http://127.0.0.1:8765/mcp
+```
+
+One process serves all three things on port 8765:
+
+| URL | What it is |
+| --- | --- |
+| <http://127.0.0.1:8765> | the web UI — bots, activity, manual console |
+| `http://127.0.0.1:8765/mcp` | the MCP endpoint opencode connects to |
+| `/health`, `/api/...` | the JSON API |
+
+> **Why one process, started by hand?** The bots live in the service's memory.
+> The old setup let opencode spawn a server per window, each with its own bot
+> list — so a bot you created in the UI was invisible to the model, which was
+> talking to a different process. With one shared service that can't happen.
+> Starting a second copy fails immediately with a message rather than
+> re-creating the split.
+
+Sanity-check it from another terminal:
 
 ```bash
-pwd   # copy this path
+curl http://127.0.0.1:8765/health
 ```
 
 ---
@@ -220,13 +237,9 @@ Then open `~/.config/opencode/opencode.json` and edit it to look like this:
   },
   "mcp": {
     "mineai-toolkit": {
-      "type": "local",
-      "command": ["poetry", "run", "mineai-mcp"],
-      "cwd": "/ABSOLUTE/PATH/TO/mineai_toolkit",
-      "enabled": true,
-      "environment": {
-        "MINEAI_OPEN_UI": "1"
-      }
+      "type": "remote",
+      "url": "http://127.0.0.1:8765/mcp",
+      "enabled": true
     }
   }
 }
@@ -242,13 +255,11 @@ What to change / know:
 - **`models`** — the key (`Qwen3.6-27B-UD-Q4_K_XL.gguf`) must match the model id
   the server reports at `curl http://localhost:2222/v1/models`. If the server
   lists a different id, change this key to match.
-- **`cwd`** — replace with the **absolute path** you copied in step 3 (`pwd`).
-  This is how opencode knows where to run `poetry run mineai-mcp`.
-- **`command`** — `["poetry", "run", "mineai-mcp"]` works because `cwd` points at
-  the Poetry project. If `poetry` isn't on opencode's `PATH`, use the absolute
-  path to the venv script instead, e.g.
-  `["/ABSOLUTE/PATH/TO/mineai_toolkit/.venv/bin/mineai-mcp"]`
-  (find it with `poetry run which mineai-mcp`).
+- **`type: "remote"`** — opencode does **not** launch the MCP server. It connects
+  to the service you started in step 3, so that service must already be running.
+  There is no `cwd` or `command` to fill in.
+- **`url`** — must end in `/mcp`. Change the port only if you set
+  `MINEAI_CONTROL_PORT`.
 
 ---
 
@@ -304,20 +315,30 @@ Where the values come from:
 | `MC_USERNAME` | the account you registered in 5b |
 | `MC_PASSWORD` | same |
 | `MC_HOST` | `mc.ntust.camp` |
-| `MC_PORT` | **`50213`** — not the default 25565 |
+| `MC_PORT` | `50213` — optional, see below |
 | `MC_AUTH` | `mojang` (Drasl speaks the legacy Yggdrasil protocol) |
 | `MC_AUTH_SERVER` | `https://drasl.ntust.camp/auth` |
 | `MC_SESSION_SERVER` | `https://drasl.ntust.camp/session` |
 | `MC_VERSION` | `1.21.11` |
 
-Two things to know:
+Three things to know:
 
-- **No `set -a`, no `export`, no shell tricks.** The MCP server loads this file
+- **`MC_PORT` is optional.** `_minecraft._tcp.mc.ntust.camp` is an SRV record
+  pointing at `50213`, and minecraft-protocol does the SRV lookup exactly when
+  the port is left at its 25565 default — so leaving it unset resolves to the
+  right port anyway. Setting it explicitly also works; setting it *wrong* is the
+  only way to break it.
+- **`MC_AUTH` matters more than it looks.** With no auth mode, the bot connects
+  in **offline mode** and the password plus both Drasl URLs are ignored — the
+  server then rejects it with `unverified_username`, which reads like anything
+  but a config problem. The service now infers `auth=mojang` whenever a password
+  is present, but keeping the line in `.env` is clearer.
+- **No `set -a`, no `export`, no shell tricks.** The service loads this file
   itself at startup ([`main.py`](main.py) pins it to `mineai_toolkit/.env` by
-  absolute path, so it works no matter which folder opencode opened). You never
-  source it by hand.
-- **It's read once, at startup.** After editing `.env`, restart the MCP server —
-  in practice, quit and reopen opencode.
+  absolute path, so it works no matter which folder you launched it from). You
+  never source it by hand.
+- **It's read once, at startup.** After editing `.env`, restart
+  `mineai-control` (Ctrl+C in its terminal, then run it again).
 
 > `.env` holds credentials. Keep it out of git; commit only `.env.example`.
 > (`minethon/examples/demos/drasl_auth/.env.example` is the equivalent template
@@ -348,24 +369,51 @@ API responses, so it won't leak back through `/bots`.
 
 ## 6. Run it
 
+Order matters: the tunnel and the service must both be up before opencode.
+
 1. **Terminal A** — keep the tunnel open (from step 2):
 
    ```bash
    ssh -N -L 2222:127.0.0.1:57413 llm_access@140.118.164.1
    ```
 
-2. **Launch the opencode desktop app**, then open the project folder in it
-   (`/ABSOLUTE/PATH/TO/mineai_toolkit`) — use the app's "Open folder / project"
-   option so it picks up the project and your config.
+2. **Terminal B** — keep the control service running (from step 3):
 
-3. In opencode:
-   - Select the model **NTUST LLM → Qwen3.6 27B UD-Q4_K_XL (remote)**
-     (use the model picker in the app's UI).
-   - opencode auto-launches the `mineai-toolkit` MCP server, which opens the bot
-     panel at <http://127.0.0.1:8765>. Create/select a bot there (step 5d).
-   - Ask the model to do something with the bot to confirm the tools are wired
-     up (e.g. "list the bots" or "walk the active bot to 100 64 100").
+   ```bash
+   poetry run mineai-control
+   ```
+
+3. **Launch the opencode desktop app** and open your project folder.
+
+4. In opencode:
+   - Select the model **NTUST LLM → Qwen3.6 27B UD-Q4_K_XL (remote)**.
+   - Create/select a bot in the web UI (step 5d).
+   - Ask the model to do something with the bot (e.g. "list the bots" or
+     "walk the active bot to 100 64 100").
    - Join the server yourself with HMCL to watch the bot move.
+
+---
+
+## 6a. Watching what the model does
+
+This is the part worth showing students. Open <http://127.0.0.1:8765> — three
+tabs:
+
+**Bots** — create, select and close bots. Unchanged.
+
+**Activity** — a live feed of every tool call. Each row shows who called it
+(`model` or `human`), the tool name, how long it took, and — when you click a
+row — the exact arguments the model sent and the exact value it got back. Bot
+lifecycle events (spawn, kick, disconnect) appear here too, so a failed login
+shows its reason instead of just sitting there looking idle.
+
+**Console** — the same 35 tools the model has, each with a form built from the
+tool's own schema. Run one yourself and it lands in the Activity feed tagged
+`human`, right next to the model's calls. Good for "the model just did X — try
+doing it yourself and compare".
+
+A useful exercise: ask the model to walk somewhere, watch the `pathfinder_*`
+calls appear, then run the same tool by hand from the Console.
 
 ---
 
@@ -377,17 +425,19 @@ API responses, so it won't leak back through `/bots`.
 | `curl http://localhost:2222/v1/models` fails | Same as above — tunnel down, or wrong local port. |
 | SSH asks for a password | Key not offered — use `ssh -i /path/to/key ...` (step 2a). |
 | SSH: "permissions are too open" for the key | `chmod 600 /path/to/your_private_key`. |
-| opencode doesn't list the MCP tools | Check `cwd` in `opencode.json` is the real project path, and `poetry install` succeeded. Run `poetry run mineai-mcp` by hand to see errors. |
-| `poetry: command not found` inside opencode | Use the absolute venv path in `command` (step 4, last bullet). |
+| opencode doesn't list the MCP tools | The control service isn't running. Start `poetry run mineai-control` (step 3) and check `curl http://127.0.0.1:8765/health`. |
+| `mineai-mcp` exits with a message | That stdio command is retired — use `mineai-control` and the `"type": "remote"` config. |
+| `[mineai] 127.0.0.1:8765 is already in use` | The service is already running; open <http://127.0.0.1:8765> instead of starting a second one. If you're sure it's stale: `pkill -f "python main.py"`. |
 | Model id mismatch | Make the `models` key match what `/v1/models` returns. |
-| Bot panel didn't open | Set `MINEAI_OPEN_UI=1` (already in the template) or open <http://127.0.0.1:8765> manually. |
+| Bot panel didn't open | Set `MINEAI_OPEN_UI=1` or open <http://127.0.0.1:8765> manually. |
+| Activity tab is empty | Nothing has been called yet. Ask the model to "list the bots", or run a tool from the Console tab. |
 | Bot creation: 「找不到本機識別檔」 | You used an **Account shorthand** without `~/.htsdg.json`. For dev test, leave that field blank and use `.env` (step 5c). |
 | Bot creation: 「找不到此任務」 | Wrong username/password, or the account doesn't exist. Re-check it at <https://drash.ntust.camp/en/login>. |
-| Bot connects to `localhost` instead of the camp server | `.env` isn't being read — it must be `mineai_toolkit/.env`, and the MCP server must have been restarted since you created it. |
-| Bot times out with no login error | Almost always `MC_PORT`. The camp server is on **50213**; the default is 25565. |
+| Bot connects to `localhost` instead of the camp server | `.env` isn't being read — it must be `mineai_toolkit/.env`, and the service must have been restarted since you created it. |
+| Bot kicked with `unverified_username` | Offline mode: the server is online-mode but `auth` wasn't set. Add `MC_AUTH=mojang` to `.env` (or supply a password, which now implies it). The reason shows in the Activity tab. |
 | `Server version '…' is not supported` | `MC_VERSION` must be ≤ `1.21.11` (the newest version mineflayer 4.37 supports). |
 | Bot and your own client keep kicking each other | You're logged into both with the same account. Register a separate account for the bot (step 5b). |
-| Panel shows no bots although you just made one | A second opencode window spawned a second MCP server; the UI belongs to whichever process grabbed port 8765 first. Keep one window, or start extras with `MINEAI_CONTROL_API=0`. |
+| The model says there are no bots, but the UI shows one | This was the old stdio architecture's failure and should no longer happen. Confirm opencode uses `"type": "remote"` and that only one `mineai-control` is running (`lsof -nP -iTCP:8765`). |
 
 ---
 

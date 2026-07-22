@@ -155,21 +155,36 @@ curl -sSL https://install.python-poetry.org | python3 -
 poetry install
 ```
 
-確認伺服器指令存在：
+啟動控制服務：
 
 ```bash
-poetry run mineai-mcp --help   # 應該會啟動 MCP 伺服器（按 Ctrl+C 結束）
+poetry run mineai-control
 ```
 
-> 啟動時，伺服器也會開啟機器人控制介面：<http://127.0.0.1:8765>。這是正常的——
-> 那個面板是給**你**用來建立／選擇／關閉機器人的。opencode／模型只能操控目前
-> 選定的那隻機器人（active bot）。
+**這個終端機要一直開著**，就像第 2 步的 SSH 通道一樣。它會印出：
 
-一般情況下你**不需要**自己手動啟動 `mineai-mcp`——opencode 會幫你啟動（見下一步）。
-先記下這個專案根目錄的**絕對路徑**，等一下會用到：
+```text
+[mineai] control UI:   http://127.0.0.1:8765
+[mineai] MCP endpoint: http://127.0.0.1:8765/mcp
+```
+
+同一個行程用 8765 埠同時提供三樣東西：
+
+| 網址 | 是什麼 |
+| --- | --- |
+| <http://127.0.0.1:8765> | 網頁介面——機器人、活動紀錄、手動主控台 |
+| `http://127.0.0.1:8765/mcp` | opencode 要連的 MCP 端點 |
+| `/health`、`/api/...` | JSON API |
+
+> **為什麼是一個行程、而且要自己啟動？** 機器人活在這個服務的記憶體裡。舊的做法
+> 是讓 opencode 每開一個視窗就生一個伺服器，各自有各自的機器人清單——所以你在
+> 介面上建立的機器人，模型看不到，因為它連的是另一個行程。只有一個共用服務就不
+> 會發生這件事。啟動第二份會直接失敗並顯示訊息，而不是又把狀態拆成兩半。
+
+從另一個終端機確認：
 
 ```bash
-pwd   # 把這個路徑複製起來
+curl http://127.0.0.1:8765/health
 ```
 
 ---
@@ -214,13 +229,9 @@ cp opencode.jsonc ~/.config/opencode/opencode.json
   },
   "mcp": {
     "mineai-toolkit": {
-      "type": "local",
-      "command": ["poetry", "run", "mineai-mcp"],
-      "cwd": "/你的/mineai_toolkit/絕對路徑",
-      "enabled": true,
-      "environment": {
-        "MINEAI_OPEN_UI": "1"
-      }
+      "type": "remote",
+      "url": "http://127.0.0.1:8765/mcp",
+      "enabled": true
     }
   }
 }
@@ -235,13 +246,10 @@ cp opencode.jsonc ~/.config/opencode/opencode.json
 - **`models`** — 這個 key（`Qwen3.6-27B-UD-Q4_K_XL.gguf`）必須跟伺服器在
   `curl http://localhost:2222/v1/models` 回報的模型 id 一致。若伺服器列出的
   是別的 id，就把這個 key 改成一致。
-- **`cwd`** — 換成你在第 3 步用 `pwd` 複製的**絕對路徑**。opencode 就是靠它
-  才知道要在哪裡執行 `poetry run mineai-mcp`。
-- **`command`** — `["poetry", "run", "mineai-mcp"]` 之所以行得通，是因為 `cwd`
-  指向這個 Poetry 專案。如果 `poetry` 不在 opencode 的 `PATH` 裡，改成用 venv
-  腳本的絕對路徑，例如
-  `["/你的/mineai_toolkit/絕對路徑/.venv/bin/mineai-mcp"]`
-  （用 `poetry run which mineai-mcp` 找出來）。
+- **`type: "remote"`** — opencode **不會**幫你啟動 MCP 伺服器，它是去連你在第 3
+  步啟動的那個服務，所以那個服務必須已經在執行中。不需要填 `cwd` 或 `command`。
+- **`url`** — 結尾一定要是 `/mcp`。只有在你改了 `MINEAI_CONTROL_PORT` 時才需要
+  改連接埠。
 
 ---
 
@@ -293,19 +301,26 @@ cp .env.example .env
 | `MC_USERNAME` | 5b 註冊的帳號 |
 | `MC_PASSWORD` | 同上 |
 | `MC_HOST` | `mc.ntust.camp` |
-| `MC_PORT` | **`50213`** — 不是預設的 25565 |
+| `MC_PORT` | `50213` — 可省略，見下方說明 |
 | `MC_AUTH` | `mojang`（Drasl 走的是舊版 Yggdrasil 協定） |
 | `MC_AUTH_SERVER` | `https://drasl.ntust.camp/auth` |
 | `MC_SESSION_SERVER` | `https://drasl.ntust.camp/session` |
 | `MC_VERSION` | `1.21.11` |
 
-兩個重點：
+三個重點：
 
-- **不需要 `set -a`、不需要 `export`、不需要任何 shell 技巧。** MCP 伺服器啟動時
-  會自己讀這個檔（[`main.py`](main.py) 用絕對路徑鎖定 `mineai_toolkit/.env`，
-  所以不管 opencode 開的是哪個資料夾都讀得到）。你不用手動 source 它。
-- **它只在啟動時讀一次。** 改完 `.env` 之後要重啟 MCP 伺服器——實務上就是關掉
-  opencode 再開一次。
+- **`MC_PORT` 可以省略。** `_minecraft._tcp.mc.ntust.camp` 有一筆 SRV 紀錄指向
+  `50213`，而 minecraft-protocol 剛好只在連接埠維持預設 25565 時才會去查 SRV，
+  所以不填反而會自動解析到正確的埠。明確填 `50213` 也可以；只有填**錯**才會壞。
+- **`MC_AUTH` 比看起來重要。** 沒設認證模式時，機器人會用**離線模式**連線，密碼和
+  兩個 Drasl 網址都會被忽略，伺服器接著以 `unverified_username` 把它踢掉——那個
+  訊息看起來完全不像設定問題。現在只要有填密碼，服務就會自動補上 `auth=mojang`，
+  但在 `.env` 裡明確寫出來還是比較清楚。
+- **不需要 `set -a`、不需要 `export`、不需要任何 shell 技巧。** 服務啟動時會自己讀
+  這個檔（[`main.py`](main.py) 用絕對路徑鎖定 `mineai_toolkit/.env`，所以不管你從
+  哪個資料夾啟動都讀得到）。你不用手動 source 它。
+- **它只在啟動時讀一次。** 改完 `.env` 之後要重啟 `mineai-control`（在它的終端機
+  按 Ctrl+C，再執行一次）。
 
 > `.env` 裡有帳密，請不要 commit 進 git，只 commit `.env.example`。
 > （`minethon/examples/demos/drasl_auth/.env.example` 是獨立腳本那條路的對應範本，
@@ -332,24 +347,48 @@ cp .env.example .env
 
 ## 6. 開始執行
 
+順序很重要：通道和控制服務都要先起來，才輪到 opencode。
+
 1. **終端機 A** — 保持通道開著（第 2 步的指令）：
 
    ```bash
    ssh -N -L 2222:127.0.0.1:57413 llm_access@140.118.164.1
    ```
 
-2. **啟動 opencode 桌面版 App**，然後在裡面開啟專案資料夾
-   （`/你的/mineai_toolkit/絕對路徑`）——用 App 的「開啟資料夾／專案」功能，
-   讓它讀到專案和你的設定。
+2. **終端機 B** — 保持控制服務開著（第 3 步的指令）：
 
-3. 在 opencode 裡：
-   - 選擇模型 **NTUST LLM → Qwen3.6 27B UD-Q4_K_XL (remote)**
-     （用 App 介面上的模型選擇器）。
-   - opencode 會自動啟動 `mineai-toolkit` MCP 伺服器，並開啟機器人面板
-     <http://127.0.0.1:8765>。在那裡建立／選擇一隻機器人（第 5d 步）。
-   - 請模型對機器人做點事來確認工具接好了（例如「列出所有機器人」或
+   ```bash
+   poetry run mineai-control
+   ```
+
+3. **啟動 opencode 桌面版 App**，並開啟你的專案資料夾。
+
+4. 在 opencode 裡：
+   - 選擇模型 **NTUST LLM → Qwen3.6 27B UD-Q4_K_XL (remote)**。
+   - 在網頁介面建立／選擇一隻機器人（第 5d 步）。
+   - 請模型對機器人做點事（例如「列出所有機器人」或
      「讓目前的機器人走到 100 64 100」）。
    - 用 HMCL 自己進伺服器，就能親眼看到機器人在動。
+
+---
+
+## 6a. 觀察模型到底做了什麼
+
+這段是最值得帶學員看的部分。打開 <http://127.0.0.1:8765>，有三個頁籤：
+
+**Bots** — 建立、選擇、關閉機器人。行為跟以前一樣。
+
+**Activity** — 每一次工具呼叫的即時紀錄。每一列會顯示是誰呼叫的
+（`model` 或 `human`）、工具名稱、花了多久；點開該列還能看到模型送出的完整參數，
+以及它拿回去的完整結果。機器人的生命週期事件（spawn、被踢、斷線）也會出現在這裡，
+所以登入失敗會直接顯示原因，而不是呆在那邊看起來像沒反應。
+
+**Console** — 模型擁有的那 35 個工具，每個都有一份依照工具本身 schema 自動產生的
+表單。你自己跑一個，它就會以 `human` 標籤出現在 Activity 裡，跟模型的呼叫並排。
+很適合用來說「模型剛剛做了 X，你自己也做一次比比看」。
+
+一個好用的練習：請模型走到某個地方，看著 `pathfinder_*` 一筆筆出現，
+然後自己從 Console 手動跑同一個工具。
 
 ---
 
@@ -361,17 +400,19 @@ cp .env.example .env
 | `curl http://localhost:2222/v1/models` 失敗 | 同上——通道斷了，或本機 port 填錯。 |
 | SSH 要求輸入密碼 | 金鑰沒被送出——用 `ssh -i /path/to/key ...`（第 2a 步）。 |
 | SSH 說金鑰「permissions are too open」 | `chmod 600 /path/to/your_private_key`。 |
-| opencode 沒列出 MCP 工具 | 檢查 `opencode.json` 的 `cwd` 是真正的專案路徑，且 `poetry install` 有成功。手動跑 `poetry run mineai-mcp` 看錯誤訊息。 |
-| opencode 裡出現 `poetry: command not found` | 在 `command` 用 venv 的絕對路徑（第 4 步最後一點）。 |
+| opencode 沒列出 MCP 工具 | 控制服務沒在跑。執行 `poetry run mineai-control`（第 3 步），並用 `curl http://127.0.0.1:8765/health` 確認。 |
+| `mineai-mcp` 印出訊息就結束 | 那個 stdio 指令已經退役——改用 `mineai-control` 搭配 `"type": "remote"` 設定。 |
+| `[mineai] 127.0.0.1:8765 is already in use` | 服務已經在跑了；直接開 <http://127.0.0.1:8765>，不要再啟一份。確定是殘留的話：`pkill -f "python main.py"`。 |
 | 模型 id 不一致 | 讓 `models` 的 key 跟 `/v1/models` 回報的一致。 |
-| 機器人面板沒開 | 設定 `MINEAI_OPEN_UI=1`（範本裡已經有）或手動開 <http://127.0.0.1:8765>。 |
+| 機器人面板沒開 | 設定 `MINEAI_OPEN_UI=1` 或手動開 <http://127.0.0.1:8765>。 |
+| Activity 頁籤是空的 | 還沒有任何呼叫。請模型「列出所有機器人」，或從 Console 頁籤跑一個工具。 |
 | 建立機器人時出現「找不到本機識別檔」 | 你填了 **Account shorthand** 但沒有 `~/.htsdg.json`。開發測試請把該欄留空，改用 `.env`（第 5c 步）。 |
 | 建立機器人時出現「找不到此任務」 | 帳號或密碼錯誤，或帳號不存在。到 <https://drash.ntust.camp/en/login> 重新確認。 |
-| 機器人連到 `localhost` 而不是營隊伺服器 | `.env` 沒被讀到——它必須放在 `mineai_toolkit/.env`，而且建立後要重啟過 MCP 伺服器。 |
-| 機器人一直逾時但沒有登入錯誤 | 幾乎都是 `MC_PORT`。營隊伺服器在 **50213**，預設值是 25565。 |
+| 機器人連到 `localhost` 而不是營隊伺服器 | `.env` 沒被讀到——它必須放在 `mineai_toolkit/.env`，而且建立後要重啟過服務。 |
+| 機器人被踢，原因是 `unverified_username` | 離線模式：伺服器是 online-mode 但沒設 `auth`。在 `.env` 補上 `MC_AUTH=mojang`（或填密碼，現在會自動推導）。原因會顯示在 Activity 頁籤。 |
 | `Server version '…' is not supported` | `MC_VERSION` 必須 ≤ `1.21.11`（mineflayer 4.37 支援的最新版本）。 |
 | 機器人跟你自己的客戶端互踢 | 兩邊用同一個帳號登入。請幫機器人另外註冊一個帳號（第 5b 步）。 |
-| 剛建立的機器人在面板上看不到 | 開了第二個 opencode 視窗、啟動了第二個 MCP 伺服器；面板屬於先搶到 8765 埠的那個行程。只留一個視窗，或其他視窗用 `MINEAI_CONTROL_API=0` 啟動。 |
+| 模型說沒有機器人，但介面上明明有一隻 | 這是舊 stdio 架構的問題，現在不該再發生。確認 opencode 用的是 `"type": "remote"`，而且只有一個 `mineai-control` 在跑（`lsof -nP -iTCP:8765`）。 |
 
 ---
 
