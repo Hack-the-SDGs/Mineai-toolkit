@@ -3,45 +3,67 @@ MCP Server for interact with minecraft.
 
 ## Runtime shape
 
-Starting the MCP server also starts the user-facing bot lifecycle control UI
-and opens it in the default browser:
+One process serves everything. Start it yourself:
 
 ```bash
-mineai-mcp
+mineai-control
 ```
 
-The control UI and its JSON API listen on:
+On `http://127.0.0.1:8765` it exposes:
+
+| Path | What |
+| --- | --- |
+| `/` | web UI — Bots, Activity, Console |
+| `/mcp` | MCP endpoint (HTTP transport) |
+| `/health`, `/bots`, `/api/*` | JSON API |
+
+opencode connects as a **remote** MCP client and launches nothing:
+
+```json
+"mineai-toolkit": { "type": "remote", "url": "http://127.0.0.1:8765/mcp" }
+```
+
+### Why one process
+
+Bots live in a module-global `BotManager`. The previous stdio design let each
+opencode window spawn its own server, so a bot created in the web UI was
+invisible to the model — it was talking to a different process with an empty bot
+list. Tool execution also cannot be split out: `tools/pathfinder.py` manipulates
+live JSPyBridge proxy objects that don't cross process boundaries.
+
+Starting a second instance therefore fails fast instead of re-creating the split:
 
 ```text
-http://127.0.0.1:8765
+[mineai] 127.0.0.1:8765 is already in use.
 ```
 
-The UI is for **the user** to create, select, inspect, and close bots. The
-model only drives whichever bot is active — it cannot create or close bots.
-Because the MCP server auto-opens the UI on start, students don't need any
-extra step: launching the client (e.g. opencode) brings the panel up.
+`mineai-mcp` (the old stdio entry point) now exits with a pointer to this
+command.
 
-Keep the control server running but stop it from opening a browser tab:
+### Environment
 
 ```bash
-MINEAI_OPEN_UI=0 mineai-mcp
+MINEAI_OPEN_UI=0 mineai-control                       # don't open a browser tab
+MINEAI_CONTROL_HOST=127.0.0.1 MINEAI_CONTROL_PORT=8765 mineai-control
 ```
 
-Disable the control server (and UI) entirely:
+Bot connection defaults come from `mineai_toolkit/.env` (see `.env.example`),
+read once at startup. They apply only when creating a bot **without** an account
+shorthand; explicit arguments always win.
 
-```bash
-MINEAI_CONTROL_API=0 mineai-mcp
-```
+## Watching the model work
 
-Change the bind address with:
+The **Activity** tab is a live feed of every tool call — source (`model` /
+`human`), name, duration, and on click the full arguments and return value. Bot
+lifecycle events (spawn, kick, disconnect) appear alongside, so a failed login
+shows its reason rather than silently doing nothing.
 
-```bash
-MINEAI_CONTROL_HOST=127.0.0.1 MINEAI_CONTROL_PORT=8765 mineai-mcp
-```
+The **Console** tab renders a form per tool from its JSON schema and runs it via
+the same FastMCP instance the model uses, tagged `human`. Same execution path,
+same middleware, same timeline — so a student's manual call and the model's call
+are directly comparable.
 
-If the port is already taken (e.g. a second client window on the same
-machine), the MCP server logs a note and keeps running without a second UI
-instead of crashing.
+Secrets are redacted from the log, and the ring buffer holds the last 500 events.
 
 ## Control API
 
@@ -87,11 +109,29 @@ Check one bot:
 curl http://127.0.0.1:8765/bots/builder/health
 ```
 
-Close one bot:
+Close one bot. It stays in the list, marked `closed`, so you can still read why
+it ended (`end_reason` / `kicked_reason`):
 
 ```bash
 curl -X DELETE http://127.0.0.1:8765/bots/builder
 ```
+
+Remove it from the list for good (closes it first if still connected):
+
+```bash
+curl -X DELETE http://127.0.0.1:8765/bots/builder/record
+```
+
+Remove every closed bot at once:
+
+```bash
+curl -X DELETE http://127.0.0.1:8765/bots/closed
+```
+
+In the web UI these are the **Close** and **Remove** buttons — a live bot offers
+Close, a closed one offers Remove — plus a **Remove N closed** button in the
+Bots header that appears only when there are closed bots. A removed name is free
+to reuse immediately.
 
 ## MCP tools
 

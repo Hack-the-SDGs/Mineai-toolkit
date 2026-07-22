@@ -6,22 +6,27 @@
       "name": "HackTheSDGs",
       "options": {
         "baseURL": "YOUR_SSH_FORWARDING_URL_PLUS_PORT",
-        "apiKey": "dummy" // WIll have actual api-key when camp  
+        "apiKey": "dummy" // Will have actual api-key when camp
       },
       "models": {
         "Qwen3.6-27B-UD-Q4_K_XL": {
-          "name": "HackTheSDGs",
+          "name": "HackTheSDGs"
         }
       }
     }
   },
   "mcp": {
+    // The control service is NOT spawned by opencode. Start it yourself first:
+    //
+    //     poetry run mineai-control
+    //
+    // It owns the bots, the web UI (http://127.0.0.1:8765) and this MCP
+    // endpoint, all in one process. That single process is the point: the old
+    // stdio setup ran one server per opencode window, each with its own bot
+    // list, so the model could not see bots created in the UI.
     "mine-ai-toolkit-mcp-server": {
-      "type": "local",
-      "command": [
-        "YOUR_PYTHON_PATH",
-        "YOUR_MINEAI_PATH"
-      ],
+      "type": "remote",
+      "url": "http://127.0.0.1:8765/mcp",
       "enabled": true
     }
   }

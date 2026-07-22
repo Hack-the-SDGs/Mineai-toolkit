@@ -18,7 +18,36 @@ from minethon import Bot, EventAdaptor
 from minethon._bridge import get_mineflayer
 from minethon._event_login import resolve_account
 
+from event_log import log as activity
+from logging_setup import get_logger
+
 CreateOptions = dict[str, Any]
+
+# get_logger (not logging.getLogger) so handlers are attached — otherwise these
+# records have nowhere to go and info-level lines are dropped silently.
+logger = get_logger("bots")
+
+
+def _record(name: str, **fields: Any) -> None:
+    """Log a bot lifecycle moment to stderr and to the activity timeline.
+
+    Connection failures are the hardest thing for a student to diagnose — a
+    kicked bot otherwise just sits there looking idle. Surfacing the reason in
+    the UI turns "nothing happened" into "unverified_username".
+    """
+    error = fields.pop("error", None)
+    activity.append(
+        source="system",
+        kind="bot",
+        name=name,
+        arguments=fields or None,
+        error=error,
+    )
+    if error:
+        logger.warning("%s: %s (%s)", name, error, fields)
+    else:
+        logger.info("%s: %s", name, fields)
+
 
 # Dev/test fallback: MC_* environment variables (loaded from a .env file by
 # main.py) supply connection defaults when no account shorthand is used. Lets a
@@ -85,6 +114,12 @@ class BotManager:
                 raise ValueError(f"Bot already exists: {clean_name}")
 
         bot_options = self._resolve_options(account, options)
+        _record(
+            "bot_connecting",
+            bot=clean_name,
+            account=account,
+            **self._public_options(bot_options),
+        )
         bot = self._create_managed_bot(bot_options)
         pathfinder_module = bot.load_plugin("mineflayer-pathfinder")
         record = BotRecord(
@@ -111,8 +146,10 @@ class BotManager:
         except Exception as exc:
             with self._lock:
                 record.last_error = str(exc)
+            _record("bot_create_failed", bot=clean_name, error=str(exc))
             raise
 
+        _record("bot_created", bot=clean_name, username=_safe_str(bot.username))
         return self.check_bot_health(clean_name)
 
     def list_bots(self) -> list[dict[str, Any]]:
@@ -176,6 +213,7 @@ class BotManager:
             raise ValueError(f"Bot is closed: {name}")
         with self._lock:
             self._active = record.name
+        _record("active_bot_changed", bot=record.name)
         return self.check_bot_health(record.name)
 
     def get_active_bot(self) -> str | None:
@@ -198,7 +236,34 @@ class BotManager:
                     record.end_reason = record.end_reason or reason
                     if self._active == record.name:
                         self._active = self._next_open_bot(exclude=record.name)
+                _record("bot_closed", bot=record.name, reason=reason)
         return self.check_bot_health(record.name)
+
+    def forget_bot(self, name: str) -> dict[str, Any]:
+        """Close the bot if needed, then drop it from the list entirely.
+
+        Closing alone keeps the record so the card can still show *why* a bot
+        died (a kick reason is often the only diagnostic available). Forgetting
+        is the deliberate second step once that has been read.
+        """
+        record = self._require_record(name)
+        if not record.closed:
+            self.close_bot(name, "removed by user")
+
+        with self._lock:
+            self._bots.pop(record.name, None)
+            if self._active == record.name:
+                self._active = self._next_open_bot(exclude=record.name)
+        _record("bot_removed", bot=record.name)
+        return {"name": record.name, "removed": True}
+
+    def forget_closed(self) -> list[str]:
+        """Drop every closed bot. Returns the names removed."""
+        with self._lock:
+            names = [name for name, rec in self._bots.items() if rec.closed]
+        for name in names:
+            self.forget_bot(name)
+        return names
 
     def close_all(self, reason: str = "mineai shutting down") -> None:
         """Best-effort cleanup for process shutdown."""
@@ -248,6 +313,7 @@ class BotManager:
         with self._lock:
             if record := self._bots.get(name):
                 record.spawned = True
+        _record("bot_spawned", bot=name)
 
     def mark_ended(self, name: str, reason: object | None = None) -> None:
         with self._lock:
@@ -256,16 +322,21 @@ class BotManager:
                 record.end_reason = _safe_str(reason)
                 if self._active == name:
                     self._active = self._next_open_bot(exclude=name)
+        _record("bot_disconnected", bot=name, reason=_safe_str(reason))
 
     def mark_kicked(self, name: str, reason: object | None = None) -> None:
         with self._lock:
             if record := self._bots.get(name):
                 record.kicked_reason = _safe_str(reason)
+        # Usually the only clue for an auth misconfiguration, e.g.
+        # "unverified_username" when the server is online-mode but auth is not set.
+        _record("bot_kicked", bot=name, error=_safe_str(reason))
 
     def mark_error(self, name: str, error: object) -> None:
         with self._lock:
             if record := self._bots.get(name):
                 record.last_error = _safe_str(error)
+        _record("bot_error", bot=name, error=_safe_str(error))
 
     def _require_record(self, name: str) -> BotRecord:
         with self._lock:
@@ -282,9 +353,17 @@ class BotManager:
 
     @staticmethod
     def _resolve_options(account: str | None, options: CreateOptions) -> CreateOptions:
-        if account is None:
-            return {**_env_options(), **options}
-        return {**resolve_account(account), **options}
+        if account is not None:
+            return {**resolve_account(account), **options}
+        resolved = {**_env_options(), **options}
+        # A password with no auth mode means offline mode in minecraft-protocol
+        # (createClient.js: `case 'offline': default:`), which silently drops the
+        # password and both Drasl URLs — an online-mode server then rejects the
+        # bot for reasons that look nothing like a credentials problem. Anyone
+        # supplying a password wants authenticated login, so assume it.
+        if resolved.get("password") and not resolved.get("auth"):
+            resolved["auth"] = "mojang"
+        return resolved
 
     @staticmethod
     def _create_managed_bot(options: CreateOptions) -> Bot:
