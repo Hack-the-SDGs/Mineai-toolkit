@@ -16,14 +16,14 @@ This guide walks you **from zero** to a working setup where:
 ## 0. What you'll end up with
 
 ```
-┌─────────────────────────────┐        SSH tunnel        ┌───────────────────────┐
-│ Your machine (desktop)      │   local :2222  ───────▶  │ Lab server            │
-│                             │                          │ 140.118.164.1         │
-│  opencode  ──▶ localhost:2222│◀════════════════════════│ model @ 127.0.0.1:57413│
-│      │                      │                          └───────────────────────┘
-│      └──▶ mineai-toolkit MCP │
-│              │              │
-│              └──▶ Minecraft bot
+┌─────────────────────────────┐        SSH tunnel        ┌────────────────────────┐
+│ Your machine (desktop)      │   local :2222  ───────▶  │ Lab server             │
+│                             │                          │ 140.118.164.1          │
+│  opencode ──▶ localhost:2222│◀═════════════════════════│ model @ 127.0.0.1:57413│
+│    │                        │                          └────────────────────────┘
+│    └──▶ mineai-toolkit MCP  │
+│           │                 │
+│           └──▶ Minecraft bot|
 └─────────────────────────────┘
 ```
 
