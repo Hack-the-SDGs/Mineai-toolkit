@@ -157,5 +157,47 @@ Pathfinder tools:
 - `pathfinder_set_goal_near(x, y, z, radius?, dynamic?, bot_name?)`
 - `pathfinder_set_goal_block(x, y, z, dynamic?, bot_name?)`
 
+Pathfinding never breaks blocks: the pathfinder runs with `canDig` disabled, so
+it routes around obstacles instead of tunnelling through them.
+
+Blocking commands are bounded by an MCP-side timeout — `MINEAI_PATHFINDER_TIMEOUT`
+(default 300s) for the `pathfinder_goto_*` tools and `MINEAI_TOOL_TIMEOUT`
+(default 180s) for every other action tool. On timeout the tool stops waiting,
+clears the pathfinder goal so the bot doesn't keep moving, and returns a
+`timeout after Ns: ...` message instead of raising. If the MCP client's own
+request timeout is shorter and fires first, the goal is still cleared (the bot
+stops) before the cancellation is surfaced to the client.
+
 Minecraft action tools accept an optional `bot_name`. If omitted, they use the
 active bot selected by the UI/control API or by `set_active_bot`.
+
+Movement tools:
+
+- `move_forward(blocks?, bot_name?)` / `move_backward` / `move_left` / `move_right`
+- `jump(bot_name?)`
+- `turn(degrees, bot_name?)` — relative, positive = left
+- `turn_left(bot_name?)` / `turn_right(bot_name?)` — 90° steps
+- `set_turn(yaw, bot_name?)` — absolute facing (0 = north)
+- `look_at(x, y, z, bot_name?)`
+
+On grid-move quest servers the turn tools are server-authoritative and snap to
+the nearest cardinal direction.
+
+Interaction tools:
+
+- `hold(name, bot_name?)` / `unhold(bot_name?)`
+- `drop(item?, count?, bot_name?)` — held stack by default
+- `dig(bot_name?)` / `place(bot_name?)` / `use(bot_name?)`
+- `use_player(username, bot_name?)` — right-click a named player (e.g. stacking)
+- `sneak(on, bot_name?)`
+- `action(name, value?, bot_name?)` — server-authoritative named quest action
+- `chat(message, bot_name?)`
+- `set_height(level, bot_name?)`
+
+Sensor tools (read-only):
+
+- `get_pos(bot_name?)` / `get_orientation(bot_name?)` / `get_height(bot_name?)`
+- `get_hand(bot_name?)`
+- `get_block(x, y, z, bot_name?)` / `get_block_property(x, y, z, property_name, bot_name?)`
+- `look_block(bot_name?)` / `get_block_in_front(bot_name?)`
+- `find_block(name, bot_name?)` / `find_blocks(name, max?, bot_name?)`

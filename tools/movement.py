@@ -40,8 +40,32 @@ def register(mcp: FastMCP) -> None:
 
     @mcp.tool
     async def turn(degrees: float, bot_name: str | None = None) -> str:
-        """Turn by ``degrees`` (relative); returns the new (yaw, pitch)."""
+        """Turn by ``degrees`` relative to current facing (positive = left).
+
+        Returns the new (yaw, pitch). On grid-move quest servers the turn is
+        server-authoritative and quantised to the nearest cardinal direction.
+        """
         return await call("turn", degrees, bot_name=bot_name)
+
+    @mcp.tool
+    async def turn_left(bot_name: str | None = None) -> str:
+        """Turn 90 degrees to the left; returns the new (yaw, pitch)."""
+        return await call("turn_left", bot_name=bot_name)
+
+    @mcp.tool
+    async def turn_right(bot_name: str | None = None) -> str:
+        """Turn 90 degrees to the right; returns the new (yaw, pitch)."""
+        return await call("turn_right", bot_name=bot_name)
+
+    @mcp.tool
+    async def set_turn(yaw: float, bot_name: str | None = None) -> str:
+        """Face an absolute ``yaw`` in degrees; returns the new (yaw, pitch).
+
+        ``0`` faces north (-Z); larger yaw turns counter-clockwise. On grid-move
+        quest servers this is server-authoritative and snaps to the nearest
+        cardinal direction; elsewhere it is a plain client-side look.
+        """
+        return await call("set_turn", yaw, bot_name=bot_name)
 
     @mcp.tool
     async def look_at(x: int, y: int, z: int, bot_name: str | None = None) -> str:

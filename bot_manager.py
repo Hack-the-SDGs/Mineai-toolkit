@@ -7,6 +7,7 @@ from a worker thread.
 
 from __future__ import annotations
 
+import contextlib
 import os
 import time
 from collections.abc import Iterable
@@ -75,6 +76,7 @@ class BotRecord:
     account: str | None
     options: CreateOptions
     pathfinder_module: Any | None = None
+    movements: Any | None = None
     created_at: float = field(default_factory=time.time)
     spawned: bool = False
     closed: bool = False
@@ -291,15 +293,58 @@ class BotManager:
         return _fmt(fn(*args))
 
     def load_pathfinder(self, bot_name: str | None = None) -> str:
-        """Ensure mineflayer-pathfinder is loaded for one bot."""
+        """Ensure mineflayer-pathfinder is loaded, with digging disabled."""
         bot = self.resolve_bot(bot_name)
         record = self._require_record(bot_name or self.get_active_bot() or "")
         if _has_pathfinder(bot):
             if record.pathfinder_module is None:
                 record.pathfinder_module = bot.require("mineflayer-pathfinder")
-            return "loaded"
-        record.pathfinder_module = bot.load_plugin("mineflayer-pathfinder")
+        else:
+            record.pathfinder_module = bot.load_plugin("mineflayer-pathfinder")
+        self._ensure_no_dig(record)
         return "loaded"
+
+    def _ensure_no_dig(self, record: BotRecord) -> None:
+        """Install a Movements profile that never digs, so paths route around.
+
+        ``canDig`` is mineflayer-pathfinder's own switch for "break a block to
+        open a path"; turning it off makes goto/setGoal navigate around
+        obstacles instead of tunnelling through them. Built once and cached: a
+        fresh Movements re-scans the block registry, and the pathfinder keeps
+        whatever profile was last set. Needs a spawned bot (registry/world), so
+        it runs lazily on first pathfinder use rather than at create time.
+        """
+        if record.movements is not None:
+            return
+        module = record.pathfinder_module or record.bot.require(
+            "mineflayer-pathfinder"
+        )
+        js_bot = getattr(record.bot, "_js", None)
+        # JSPyBridge treats calling a JS class as `new`, same as the GoalNear
+        # construction in tools/pathfinder.py.
+        movements = module.Movements(js_bot)
+        movements.canDig = False
+        record.bot.pathfinder.setMovements(movements)
+        record.movements = movements
+
+    def clear_pathfinder_goal(self, bot_name: str | None = None) -> None:
+        """Best-effort stop + drop the pathfinder goal; no-op if unavailable.
+
+        Called when an MCP tool times out: an abandoned goto or a background
+        setGoal must not leave the bot wandering after the model has given up
+        waiting. Every step is suppressed because the bridge may be mid-call on
+        another thread, and a failure here must never mask the timeout itself.
+        """
+        try:
+            bot = self.resolve_bot(bot_name)
+        except Exception:
+            return
+        if not _has_pathfinder(bot):
+            return
+        with contextlib.suppress(Exception):
+            bot.pathfinder.stop()
+        with contextlib.suppress(Exception):
+            bot.pathfinder.setGoal(None)
 
     def pathfinder_module(self, bot_name: str | None = None) -> Any:
         """Return the pathfinder npm module, loading it if needed."""
