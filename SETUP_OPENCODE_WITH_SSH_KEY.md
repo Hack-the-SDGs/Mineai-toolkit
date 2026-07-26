@@ -293,11 +293,18 @@ and you'll waste time debugging the wrong layer.
 
 ### 5b. Register the bot's account
 
-The bot logs in as its **own account**, not yours. Two clients cannot share one
-username — they'll kick each other in a loop.
+The bot logs in as its **own account**, not the one you watch with. Two clients
+cannot share one username — they'll kick each other in a loop.
 
 Register at **<https://drash.ntust.camp/en/login>** and create an account for the
 bot (e.g. `devbot01`). Note the username and password; that's all you need.
+
+> **The rule is one live session per account — nothing to do with "real" vs
+> "test" accounts.** Every account here is a Drasl account; there's no premium
+> tier. Your HMCL observer can be *any* account (even another throwaway you
+> made) — it just has to be a **different** account from the one in `.env`. So:
+> observer = account A, bot (`.env`) = account B. The only broken setup is HMCL
+> and `.env` using the *same* username at the same time.
 
 ### 5c. Create your `.env`
 
