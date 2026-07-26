@@ -29,9 +29,58 @@ def register(mcp: FastMCP) -> None:
         return await call("place", bot_name=bot_name)
 
     @mcp.tool
+    async def unhold(bot_name: str | None = None) -> str:
+        """Put the held item back into the inventory; False if hand was empty."""
+        return await call("unhold", bot_name=bot_name)
+
+    @mcp.tool
+    async def drop(
+        item: str | None = None,
+        count: int | None = None,
+        bot_name: str | None = None,
+    ) -> str:
+        """Throw items on the ground.
+
+        With no ``item`` the held stack is tossed. Given an item name, matching
+        inventory stacks are tossed; ``count`` limits how many (all when omitted
+        or larger than the amount carried). Returns True on success, False if
+        the hand is empty or the item is not carried.
+        """
+        return await call("drop", item, count, bot_name=bot_name)
+
+    @mcp.tool
     async def use(bot_name: str | None = None) -> str:
         """Use/activate the held item; True on success."""
         return await call("use", bot_name=bot_name)
+
+    @mcp.tool
+    async def use_player(username: str, bot_name: str | None = None) -> str:
+        """Right-click the named player's entity (e.g. to mount/stack); True on success.
+
+        Aims at the center of the player's bounding box automatically. Errors if
+        the player is offline, in another world, or outside the bot's range.
+        """
+        return await call("use_player", username, bot_name=bot_name)
+
+    @mcp.tool
+    async def sneak(on: bool, bot_name: str | None = None) -> str:
+        """Hold (``on=True``) or release (``on=False``) sneak; returns the new state."""
+        return await call("sneak", on, bot_name=bot_name)
+
+    @mcp.tool
+    async def action(
+        name: str,
+        value: int | None = None,
+        bot_name: str | None = None,
+    ) -> str:
+        """Ask the quest server to run a named action (e.g. 'put out').
+
+        Server-authoritative: sends a vanilla trigger and does nothing
+        client-side. ``value`` is an optional integer payload for quests that
+        take a parameter. The datapack validates and performs (or ignores) it.
+        """
+        await call("action", name, value, bot_name=bot_name)
+        return "sent"
 
     @mcp.tool
     async def chat(message: str, bot_name: str | None = None) -> str:
