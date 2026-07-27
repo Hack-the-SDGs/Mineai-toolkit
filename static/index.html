@@ -22,14 +22,10 @@
         </div>
       </header>
 
-      <nav class="tabs">
-        <button class="tab on" data-tab="bots">Bots</button>
-        <button class="tab" data-tab="activity">Activity<span class="count" id="ev-count">0</span></button>
-        <button class="tab" data-tab="console">Console</button>
-      </nav>
-
-      <!-- ================= BOTS ================= -->
-      <section class="panel on" id="panel-bots">
+      <!-- ================= DASHBOARD (bots sidebar + activity) ================= -->
+      <section class="panel on" id="panel-dashboard">
+        <div class="layout">
+        <aside class="sidebar">
         <section class="card">
           <div class="card-head"><h2>Create a bot</h2></div>
           <div class="card-body">
@@ -97,14 +93,14 @@
           </div>
           <div class="card-body"><div class="bots" id="bots"></div></div>
         </section>
-      </section>
+        </aside>
 
-      <!-- ================= ACTIVITY ================= -->
-      <section class="panel" id="panel-activity">
+        <main class="main">
         <section class="card">
           <div class="card-head">
-            <h2>Activity</h2>
+            <h2>Activity <span class="count" id="ev-count">0</span></h2>
             <div class="feed-controls">
+              <button class="btn small" id="console-toggle">Console</button>
               <select id="ev-filter">
                 <option value="all">All sources</option>
                 <option value="model">Model only</option>
@@ -121,6 +117,40 @@
             </div>
           </div>
           <div class="card-body">
+            <div class="viz">
+              <div class="viz-stats" id="viz-stats"></div>
+              <div class="viz-panel">
+                <div class="viz-toggle">
+                  <button type="button" class="seg on" data-view="map">Map</button>
+                  <button type="button" class="seg" data-view="calls">Calls</button>
+                </div>
+                <div class="viz-view on" id="view-map">
+                  <canvas id="map-canvas"></canvas>
+                  <div class="map-north">N</div>
+                  <div class="map-legend" id="map-legend"></div>
+                  <div class="map-empty" id="map-empty">
+                    A top-down map draws here as bots move — path trails, facing,
+                    and dig/place marks.
+                  </div>
+                </div>
+                <div class="viz-view" id="view-calls">
+                  <div class="path-wrap">
+                    <div class="loop-banner" id="loop-banner" hidden></div>
+                    <div class="call-path" id="call-path"></div>
+                  </div>
+                  <div class="calls-legend" id="calls-legend">
+                    <span class="lg"><i style="background:var(--accent)"></i>move</span>
+                    <span class="lg"><i style="background:var(--amber)"></i>interact</span>
+                    <span class="lg"><i style="background:var(--green)"></i>sense</span>
+                    <span class="lg"><i style="background:var(--purple)"></i>path</span>
+                  </div>
+                  <div class="calls-empty" id="calls-empty">
+                    The model's calling path draws here in order — repeats collapse
+                    to ×N, and a loop is called out when it repeats.
+                  </div>
+                </div>
+              </div>
+            </div>
             <p class="note">
               Every tool the model calls shows up here with its arguments and its
               return value. Click a row to expand it.
@@ -128,26 +158,33 @@
             <div class="feed" id="feed"></div>
           </div>
         </section>
+        </main>
+        </div>
       </section>
 
-      <!-- ================= CONSOLE ================= -->
-      <section class="panel" id="panel-console">
-        <section class="card">
-          <div class="card-head"><h2>Manual console</h2></div>
-          <div class="card-body">
-            <p class="note">
-              These are the exact tools the model has. Run one yourself and it
-              appears in the Activity tab tagged <span class="src human">human</span>,
-              right next to the model's own calls.
-            </p>
-            <div class="field console-search">
-              <input type="text" id="tool-search" placeholder="Filter tools… (e.g. move, dig, pathfinder)" autocomplete="off" />
-            </div>
-            <div id="tools"></div>
-          </div>
-        </section>
-      </section>
     </div>
+
+    <!-- ================= CONSOLE (slide-over drawer) ================= -->
+    <div class="drawer-scrim" id="drawer-scrim" hidden></div>
+    <aside class="drawer" id="console-drawer" aria-hidden="true">
+      <div class="drawer-head">
+        <h2>Manual console</h2>
+        <button class="btn ghost small" id="console-close" aria-label="Close console">✕</button>
+      </div>
+      <div class="drawer-body">
+        <p class="note">
+          These are the exact tools the model has. Run one yourself and it
+          appears in Activity tagged <span class="src human">human</span>, right
+          next to the model's own calls — watch it there while this stays open.
+        </p>
+        <div class="field console-search">
+          <input type="text" id="tool-search" placeholder="Filter tools… (e.g. move, dig, pathfinder)" autocomplete="off" />
+        </div>
+        <div id="tools"></div>
+      </div>
+    </aside>
+
+    <div class="call-pop" id="call-pop" hidden></div>
 
     <div class="toasts" id="toasts"></div>
     <script src="/static/app.js"></script>
