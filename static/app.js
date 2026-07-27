@@ -33,14 +33,56 @@ function toast(title, message, isError = false) {
 
 /* ------------------------------- tabs ------------------------------- */
 
-document.querySelectorAll(".tab").forEach((tab) => {
-  tab.addEventListener("click", () => {
-    document.querySelectorAll(".tab").forEach((t) => t.classList.remove("on"));
-    document.querySelectorAll(".panel").forEach((p) => p.classList.remove("on"));
-    tab.classList.add("on");
-    $("panel-" + tab.dataset.tab).classList.add("on");
+/* Manual console lives in a slide-over drawer so it can open on top of the bots
+   sidebar without hiding the Activity feed — you drive a bot, then watch its
+   effect (and the model's) land in the timeline that stays visible alongside. */
+const drawer = $("console-drawer");
+const scrim = $("drawer-scrim");
+const openConsole = () => {
+  drawer.classList.add("open");
+  drawer.setAttribute("aria-hidden", "false");
+  scrim.hidden = false;
+  $("tool-search").focus();
+};
+const closeConsole = () => {
+  drawer.classList.remove("open");
+  drawer.setAttribute("aria-hidden", "true");
+  scrim.hidden = true;
+};
+$("console-toggle").addEventListener("click", openConsole);
+$("console-close").addEventListener("click", closeConsole);
+scrim.addEventListener("click", closeConsole);
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && drawer.classList.contains("open")) closeConsole();
+});
+
+/* Map | Calls toggle for the big visualization panel. */
+document.querySelectorAll(".viz-toggle .seg").forEach((btn) => {
+  btn.addEventListener("click", () => {
+    currentView = btn.dataset.view;
+    document.querySelectorAll(".viz-toggle .seg").forEach((b) => b.classList.toggle("on", b === btn));
+    $("view-map").classList.toggle("on", currentView === "map");
+    $("view-calls").classList.toggle("on", currentView === "calls");
+    requestAnimationFrame(renderViz); // canvases size only once their view is shown
   });
 });
+
+/* Hover a call-path chip (node) to see that call's real args/result. */
+(() => {
+  const cp = $("call-path");
+  if (!cp) return;
+  cp.addEventListener("mouseover", (e) => {
+    const chipEl = e.target.closest(".chip");
+    if (chipEl && cp.contains(chipEl)) showCallPop(chipEl);
+  });
+  cp.addEventListener("mouseout", (e) => {
+    if (!e.target.closest(".chip")) return;
+    const to = e.relatedTarget;
+    if (!to || !to.closest || !to.closest(".chip")) hideCallPop();
+  });
+})();
+
+window.addEventListener("resize", () => requestAnimationFrame(renderViz));
 
 /* ------------------------------- bots ------------------------------- */
 
@@ -92,6 +134,8 @@ async function refreshBots() {
     $("server-dot").className = "dot up";
     $("server-label").textContent = "service up";
     const bots = data.bots || [];
+    ingestHealth(bots);
+    renderViz();
     const host = $("bots");
     $("clear-closed").style.display = "none";
     if (!bots.length) {
@@ -206,12 +250,157 @@ const fmtTime = (ts) => {
   return d.toLocaleTimeString(undefined, { hour12: false }) + "." + String(d.getMilliseconds()).padStart(3, "0");
 };
 
-const preview = (ev) => {
-  if (ev.error) return ev.error;
-  const args = ev.arguments && Object.keys(ev.arguments).length ? JSON.stringify(ev.arguments) : "";
-  const out = ev.result != null ? " → " + JSON.stringify(ev.result) : "";
-  return (args + out).slice(0, 220);
+/* Canvas colours (mirror the CSS tokens — a canvas can't read CSS variables). */
+const C = {
+  accent: "#4ea1ff", green: "#3fb950", amber: "#d29922", purple: "#bc8cff",
+  red: "#f85149", muted: "#8b95a3", grid: "#212a33",
 };
+const BOT_PALETTE = ["#4ea1ff", "#3fb950", "#d29922", "#bc8cff", "#f472b6", "#2dd4bf", "#f85149", "#a3e635"];
+const CAT_COLOR = {
+  movement: "var(--accent)", pathfinder: "var(--purple)",
+  interaction: "var(--amber)", sensors: "var(--green)", lifecycle: "var(--muted)",
+};
+
+/* Short verb used to phrase the summary line for the directional move tools. */
+const MOVE_VERB = { move_forward: "forward", move_backward: "backward", move_left: "left", move_right: "right" };
+const POS_TOOLS = new Set([
+  "move_forward", "move_backward", "move_left", "move_right", "jump", "get_pos",
+  "pathfinder_goto_near", "pathfinder_goto_block", "pathfinder_goto_get_to_block",
+  "pathfinder_goto_xz", "pathfinder_goto_near_xz", "pathfinder_goto_y",
+]);
+const FACE_TOOLS = new Set(["turn", "turn_left", "turn_right", "set_turn", "look_at", "get_orientation"]);
+const DIG_TOOLS = new Set(["dig", "place"]);
+
+const toolCat = {}; // name -> category, filled by loadTools()
+let activeBot = null;
+let currentView = "map"; // "map" | "calls" — which big-panel view is shown
+const botState = {}; // name -> { color, x, y, z, yaw, trail[], marks[], closed, ... }
+let colorIdx = 0;
+const seenIds = new Set(); // rows already animated in
+
+const catColorFor = (name) => CAT_COLOR[toolCat[name]] || "var(--border)";
+const PATH_WINDOW = 40; // last N model calls shown in the call-path timeline
+// The calling graph is about the *model* looping, so human console runs are excluded.
+const modelCalls = (n) => {
+  const c = events.filter((e) => e.kind === "tool_call" && e.source === "model");
+  return n ? c.slice(-n) : c;
+};
+const round = (n) => Math.round(n);
+
+// A tool that returns a string surfaces either as a bare string or, when
+// FastMCP wraps it in structured output, as { result: "..." }. Unwrap to text.
+const resultText = (r) =>
+  typeof r === "string" ? r : r && typeof r === "object" && typeof r.result === "string" ? r.result : "";
+const nums = (s) => ((typeof s === "string" ? s : resultText(s)).match(/-?\d+(?:\.\d+)?/g) || []).map(Number);
+
+function ensureBot(name) {
+  if (!botState[name]) {
+    botState[name] = { color: BOT_PALETTE[colorIdx++ % BOT_PALETTE.length], x: null, y: null, z: null, yaw: 0, trail: [], marks: [] };
+  }
+  return botState[name];
+}
+
+function setPos(st, x, y, z, t) {
+  st.x = x; st.y = y; st.z = z;
+  const last = st.trail[st.trail.length - 1];
+  if (!last || Math.abs(last[0] - x) > 0.01 || Math.abs(last[1] - z) > 0.01) {
+    st.trail.push([x, z, t || Date.now() / 1000]);
+    if (st.trail.length > 250) st.trail = st.trail.slice(-250);
+  }
+}
+
+/* Fold one streamed event into per-bot map state. */
+function ingest(ev) {
+  if (ev.kind !== "tool_call") return;
+  const name = (ev.arguments && ev.arguments.bot_name) || activeBot;
+  if (!name) return;
+  const st = ensureBot(name);
+  const n = nums(ev.result);
+  if (POS_TOOLS.has(ev.name) && n.length >= 3) {
+    setPos(st, n[0], n[1], n[2], ev.timestamp);
+  } else if (FACE_TOOLS.has(ev.name) && n.length >= 1) {
+    st.yaw = n[0];
+  } else if (DIG_TOOLS.has(ev.name) && n.length >= 3) {
+    st.marks.push({ x: n[0], z: n[2], kind: ev.name });
+    if (st.marks.length > 40) st.marks = st.marks.slice(-40);
+  }
+}
+
+/* Fold /health snapshots in: current position, liveness, active bot. */
+function ingestHealth(bots) {
+  const active = bots.find((b) => b.active);
+  if (active) activeBot = active.name;
+  bots.forEach((b) => {
+    const st = ensureBot(b.name);
+    st.closed = b.closed;
+    st.active = b.active;
+    // /health returns position as a [x, y, z] array (get_pos' tuple), while tool
+    // results are "x, y, z" strings — handle both so a bot shows on the map the
+    // moment it spawns, before it has moved.
+    const n = Array.isArray(b.position) ? b.position.map(Number) : nums(b.position);
+    if (n.length >= 3 && n.every((v) => !Number.isNaN(v))) setPos(st, n[0], n[1], n[2]);
+  });
+}
+
+/* ---- humanized feed ---- */
+
+function prettyResult(ev) {
+  if (ev.error) return { txt: String(ev.error).split(/\n|\s+at\s/)[0].slice(0, 80), err: true };
+  if (ev.result == null || ev.result === "") return null;
+  const r = resultText(ev.result) || ev.result;
+  if (typeof r === "string") {
+    if (r === "") return null;
+    const n = nums(r);
+    if (n.length === 3 && /^-?[\d.]+,\s*-?[\d.]+,\s*-?[\d.]+$/.test(r.trim())) {
+      return { txt: `(${n.map(round).join(", ")})` };
+    }
+    return { txt: r.length > 64 ? r.slice(0, 64) + "…" : r };
+  }
+  return { txt: JSON.stringify(r).slice(0, 64) };
+}
+
+function summaryText(ev) {
+  const a = ev.arguments || {};
+  switch (ev.name) {
+    case "move_forward": case "move_backward": case "move_left": case "move_right":
+      return `walked ${MOVE_VERB[ev.name]} ${a.blocks ?? 1}`;
+    case "jump": return "jumped";
+    case "turn": return `turned ${a.degrees ?? "?"}°`;
+    case "turn_left": return "turned left 90°";
+    case "turn_right": return "turned right 90°";
+    case "set_turn": return `faced yaw ${a.yaw ?? "?"}°`;
+    case "look_at": return `looked at (${a.x}, ${a.y}, ${a.z})`;
+    case "dig": return "dug the block in front";
+    case "place": return "placed the held block";
+    case "use": return "used the held item";
+    case "use_player": return `right-clicked ${a.username ?? "a player"}`;
+    case "hold": return `equipped ${a.name ?? "?"}`;
+    case "unhold": return "put the held item away";
+    case "drop": return a.item ? `dropped ${a.item}${a.count ? ` ×${a.count}` : ""}` : "dropped the held item";
+    case "sneak": return a.on ? "started sneaking" : "stopped sneaking";
+    case "action": return `action "${a.name ?? "?"}"${a.value != null ? ` (${a.value})` : ""}`;
+    case "chat": return `“${a.message ?? ""}”`;
+    case "set_height": return `set size to ${a.level ?? "?"}`;
+    case "get_pos": return "read position";
+    case "get_orientation": return "read facing";
+    case "get_block": return `read block at (${a.x}, ${a.y}, ${a.z})`;
+    case "get_block_property": return `read ${a.property_name ?? "property"} at (${a.x}, ${a.y}, ${a.z})`;
+    case "find_block": return `searched for ${a.name ?? "?"}`;
+    case "find_blocks": return `searched for ${a.name ?? "?"} (×${a.max ?? 16})`;
+    case "look_block": return "read the block it's aiming at";
+    case "get_block_in_front": return "read the block in front";
+    case "get_hand": return "checked its hand";
+    case "get_height": return "read its size";
+    case "set_active_bot": return `made ${a.bot_name ?? "?"} active`;
+    default:
+      if (ev.name.startsWith("pathfinder_goto")) {
+        const to = [a.x, a.y, a.z].filter((v) => v != null).join(", ");
+        return `pathfind to (${to})`;
+      }
+      if (ev.name.startsWith("pathfinder_")) return ev.name.replace(/_/g, " ");
+      return ev.name.replace(/_/g, " ");
+  }
+}
 
 function renderFeed() {
   const src = $("ev-filter").value;
@@ -227,33 +416,352 @@ function renderFeed() {
     return;
   }
 
+  const fresh = [];
   $("feed").innerHTML = rows
     .slice()
     .reverse()
-    .map(
-      (ev) => `
-      <div class="ev ${ev.error ? "err" : ""}" data-id="${ev.id}">
+    .map((ev) => {
+      const isNew = !seenIds.has(ev.id);
+      if (isNew) fresh.push(ev.id);
+      const r = prettyResult(ev);
+      const accent = ev.error ? "var(--red)" : catColorFor(ev.name);
+      return `
+      <div class="ev ${ev.source} ${ev.error ? "err" : ""} ${isNew ? "new" : ""}" data-id="${ev.id}" style="border-left:3px solid ${accent}">
         <div class="ev-head">
           <span class="src ${ev.source}">${ev.source}</span>
-          <span class="kind">${ev.kind}</span>
           <span class="ev-name">${esc(ev.name)}</span>
           ${ev.duration_ms != null ? `<span class="ev-ms">${ev.duration_ms} ms</span>` : ""}
           <span class="ev-time">${fmtTime(ev.timestamp)}</span>
         </div>
-        <div class="ev-preview">${esc(preview(ev))}</div>
+        <div class="ev-summary">${esc(summaryText(ev))}${r ? ` <span class="r ${r.err ? "err" : ""}">${r.err ? "" : "→ "}${esc(r.txt)}</span>` : ""}</div>
         <div class="ev-detail">
           <div class="lbl">Arguments</div>
           <pre>${esc(JSON.stringify(ev.arguments ?? null, null, 2))}</pre>
           <div class="lbl">${ev.error ? "Error" : "Result"}</div>
           <pre>${esc(ev.error || JSON.stringify(ev.result ?? null, null, 2))}</pre>
         </div>
-      </div>`,
-    )
+      </div>`;
+    })
     .join("");
+  fresh.forEach((id) => seenIds.add(id));
 
   $("feed")
     .querySelectorAll(".ev")
     .forEach((row) => row.addEventListener("click", () => row.classList.toggle("open")));
+}
+
+/* ---- stat strip + sparkline ---- */
+
+function renderStats() {
+  const el = $("viz-stats");
+  if (!el) return;
+  const total = events.length;
+  const model = events.filter((e) => e.source === "model").length;
+  const human = events.filter((e) => e.source === "human").length;
+  const counts = {};
+  events.filter((e) => e.kind === "tool_call").forEach((e) => (counts[e.name] = (counts[e.name] || 0) + 1));
+  const top = Object.entries(counts).sort((a, b) => b[1] - a[1]).slice(0, 4);
+  const maxc = top.length ? top[0][1] : 1;
+
+  el.innerHTML = `
+    <div class="stat-tile"><div class="st-k">tool calls</div><div class="st-v">${total}</div></div>
+    <div class="stat-tile">
+      <div class="st-k">model / human</div>
+      <div class="st-v"><span style="color:var(--purple)">${model}</span> <span class="muted">/</span> <span style="color:var(--green)">${human}</span></div>
+    </div>
+    <div class="stat-tile spark"><div class="st-k">calls / last 60s</div><canvas id="spark-canvas"></canvas></div>
+    <div class="stat-tile">
+      <div class="st-k">top tools</div>
+      <div class="toplist">${
+        top.length
+          ? top.map(([n, c]) => `<div class="tl"><span class="tl-n">${esc(n)}</span><span class="tl-bar"><i style="width:${round((c / maxc) * 100)}%"></i></span><span class="tl-c">${c}</span></div>`).join("")
+          : '<span class="muted">—</span>'
+      }</div>
+    </div>`;
+  drawSpark();
+}
+
+function sizeCanvas(cv) {
+  const w = cv.clientWidth;
+  const h = cv.clientHeight;
+  if (!w || !h) return null;
+  const dpr = window.devicePixelRatio || 1;
+  cv.width = w * dpr;
+  cv.height = h * dpr;
+  const ctx = cv.getContext("2d");
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, w, h);
+  return { ctx, w, h };
+}
+
+function drawSpark() {
+  const cv = $("spark-canvas");
+  if (!cv) return;
+  const s = sizeCanvas(cv);
+  if (!s) return;
+  const { ctx, w, h } = s;
+  const now = Date.now() / 1000;
+  const span = 60;
+  const buckets = 20;
+  const bw = span / buckets;
+  const counts = new Array(buckets).fill(0);
+  events.forEach((e) => {
+    const age = now - e.timestamp;
+    if (age >= 0 && age < span) counts[Math.min(buckets - 1, Math.floor((span - age) / bw))]++;
+  });
+  const max = Math.max(1, ...counts);
+  const gap = 2;
+  const colW = (w - (buckets - 1) * gap) / buckets;
+  counts.forEach((c, i) => {
+    if (!c) return;
+    const bh = Math.max(2, (c / max) * (h - 2));
+    ctx.fillStyle = C.accent;
+    ctx.fillRect(i * (colW + gap), h - bh, colW, bh);
+  });
+}
+
+/* ---- live minimap ---- */
+
+function drawMap() {
+  const cv = $("map-canvas");
+  if (!cv) return;
+  const s = sizeCanvas(cv);
+  if (!s) return;
+  const { ctx, w, h } = s;
+
+  const names = Object.keys(botState);
+  const pts = [];
+  names.forEach((n) => {
+    const st = botState[n];
+    if (st.x != null) pts.push([st.x, st.z]);
+    st.trail.forEach((p) => pts.push([p[0], p[1]]));
+    st.marks.forEach((m) => pts.push([m.x, m.z]));
+  });
+
+  const empty = $("map-empty");
+  if (empty) empty.classList.toggle("hide", pts.length > 0);
+  renderLegend(names);
+  if (!pts.length) return;
+
+  let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity;
+  pts.forEach(([x, z]) => {
+    minX = Math.min(minX, x); maxX = Math.max(maxX, x);
+    minZ = Math.min(minZ, z); maxZ = Math.max(maxZ, z);
+  });
+  const spanX = Math.max(maxX - minX, 8);
+  const spanZ = Math.max(maxZ - minZ, 8);
+  const pad = 26;
+  const scale = Math.min((w - 2 * pad) / spanX, (h - 2 * pad) / spanZ);
+  const cx = (minX + maxX) / 2;
+  const cz = (minZ + maxZ) / 2;
+  const toPx = (x, z) => [w / 2 + (x - cx) * scale, h / 2 + (z - cz) * scale];
+
+  // faint grid every 8 world blocks
+  ctx.strokeStyle = C.grid;
+  ctx.lineWidth = 1;
+  const step = 8;
+  for (let gx = Math.ceil(minX / step) * step; gx <= maxX; gx += step) {
+    const [px] = toPx(gx, 0);
+    ctx.beginPath(); ctx.moveTo(px, 0); ctx.lineTo(px, h); ctx.stroke();
+  }
+  for (let gz = Math.ceil(minZ / step) * step; gz <= maxZ; gz += step) {
+    const [, py] = toPx(0, gz);
+    ctx.beginPath(); ctx.moveTo(0, py); ctx.lineTo(w, py); ctx.stroke();
+  }
+
+  names.forEach((n) => {
+    const st = botState[n];
+    // trail
+    if (st.trail.length > 1) {
+      ctx.strokeStyle = st.color;
+      ctx.globalAlpha = st.closed ? 0.25 : 0.55;
+      ctx.lineWidth = 2;
+      ctx.lineJoin = "round";
+      ctx.beginPath();
+      st.trail.forEach((p, i) => {
+        const [px, py] = toPx(p[0], p[1]);
+        i ? ctx.lineTo(px, py) : ctx.moveTo(px, py);
+      });
+      ctx.stroke();
+      ctx.globalAlpha = 1;
+    }
+    // dig/place marks
+    st.marks.forEach((mk) => {
+      const [px, py] = toPx(mk.x, mk.z);
+      ctx.fillStyle = mk.kind === "dig" ? C.red : C.green;
+      ctx.globalAlpha = 0.65;
+      ctx.fillRect(px - 2.5, py - 2.5, 5, 5);
+    });
+    ctx.globalAlpha = 1;
+    // bot marker + facing
+    if (st.x != null) drawBot(ctx, toPx(st.x, st.z), st);
+  });
+}
+
+function drawBot(ctx, [px, py], st) {
+  if (st.active) {
+    ctx.fillStyle = st.color;
+    ctx.globalAlpha = 0.18;
+    ctx.beginPath(); ctx.arc(px, py, 11, 0, Math.PI * 2); ctx.fill();
+    ctx.globalAlpha = 1;
+  }
+  // facing arrow: world yaw 0 = north(-Z); forward = (-sin, -cos) in (x, z)
+  const yaw = (st.yaw || 0) * Math.PI / 180;
+  const fx = -Math.sin(yaw);
+  const fz = -Math.cos(yaw);
+  ctx.strokeStyle = st.color;
+  ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.moveTo(px, py); ctx.lineTo(px + fx * 13, py + fz * 13); ctx.stroke();
+  // body
+  ctx.fillStyle = st.closed ? C.muted : st.color;
+  ctx.beginPath(); ctx.arc(px, py, 5, 0, Math.PI * 2); ctx.fill();
+  ctx.strokeStyle = "#0b0e12";
+  ctx.lineWidth = 1.5;
+  ctx.stroke();
+}
+
+function renderLegend(names) {
+  const el = $("map-legend");
+  if (!el) return;
+  el.innerHTML = names
+    .filter((n) => botState[n].x != null)
+    .map((n) => `<span class="lg ${botState[n].closed ? "off" : ""}"><i style="background:${botState[n].color}"></i>${esc(n)}</span>`)
+    .join("");
+}
+
+/* ---- calls view: ordered call-path timeline ---- */
+
+// True when the p-length blocks starting at `a` and `b` are identical.
+function blockEq(names, a, b, p) {
+  for (let k = 0; k < p; k++) if (names[a + k] !== names[b + k]) return false;
+  return true;
+}
+
+// Greedily fold a call sequence into segments, collapsing runs and short cycles:
+//   dig,dig,dig               -> { single, dig, x3 }
+//   get_pos,move,get_pos,move -> { loop, [get_pos, move], x2 }
+function parseSegments(names) {
+  const segs = [];
+  const n = names.length;
+  const MAXP = 5;
+  let i = 0;
+  while (i < n) {
+    let best = { p: 1, reps: 1 };
+    for (let p = 1; p <= Math.min(MAXP, n - i); p++) {
+      let reps = 1;
+      while (i + p * (reps + 1) <= n && blockEq(names, i, i + p * reps, p)) reps++;
+      if (reps >= 2) {
+        const cover = p * reps;
+        const bestCover = best.reps >= 2 ? best.p * best.reps : 0;
+        if (cover > bestCover || (cover === bestCover && p < best.p)) best = { p, reps };
+      }
+    }
+    if (best.reps >= 2) {
+      const len = best.p * best.reps;
+      if (best.p === 1) segs.push({ kind: "single", name: names[i], count: best.reps, start: i, len });
+      else segs.push({ kind: "loop", block: names.slice(i, i + best.p), reps: best.reps, start: i, len });
+      i += len;
+    } else {
+      segs.push({ kind: "single", name: names[i], count: 1, start: i, len: 1 });
+      i += 1;
+    }
+  }
+  return segs;
+}
+
+// Each rendered chip registers the call(s) it stands for; the hover popover
+// reads this by index (data-ci) to show the real arguments/result.
+let pathChipData = [];
+function registerChip(name, evs) {
+  return pathChipData.push({ name, evs }) - 1;
+}
+
+function chip(name, count, cur, ci) {
+  const badge = count > 1 ? `<span class="count">×${count}</span>` : "";
+  return `<span class="chip${cur ? " cur" : ""}" data-ci="${ci}"><i class="dot" style="background:${catColorFor(name)}"></i>${esc(name)}${badge}</span>`;
+}
+
+function showCallPop(chipEl) {
+  const d = pathChipData[+chipEl.dataset.ci];
+  const pop = $("call-pop");
+  if (!d || !pop) return;
+  const last = d.evs[d.evs.length - 1];
+  let html = `<div class="cp-head"><span class="cp-name">${esc(d.name)}</span>${d.evs.length > 1 ? `<span class="cp-n">${d.evs.length} calls</span>` : ""}</div>`;
+  if (last) {
+    html += `<div class="cp-time">${fmtTime(last.timestamp)}${last.duration_ms != null ? ` · ${last.duration_ms} ms` : ""}${d.evs.length > 1 ? " · latest" : ""}</div>`;
+    const a = last.arguments && Object.keys(last.arguments).length ? JSON.stringify(last.arguments) : "—";
+    html += `<div class="cp-lbl">args</div><div class="cp-val">${esc(a)}</div>`;
+    const res = last.error
+      ? String(last.error).split(/\n/)[0]
+      : resultText(last.result) || (last.result != null ? JSON.stringify(last.result) : "—");
+    html += `<div class="cp-lbl">${last.error ? "error" : "result"}</div><div class="cp-val${last.error ? " err" : ""}">${esc(String(res).slice(0, 240))}</div>`;
+  }
+  pop.innerHTML = html;
+  pop.hidden = false;
+  const r = chipEl.getBoundingClientRect();
+  pop.style.left = Math.max(8, Math.min(window.innerWidth - pop.offsetWidth - 8, r.left)) + "px";
+  pop.style.top = r.bottom + 6 + "px";
+}
+function hideCallPop() {
+  const pop = $("call-pop");
+  if (pop) pop.hidden = true;
+}
+
+function renderLoopBanner(tail) {
+  const b = $("loop-banner");
+  if (!b) return;
+  const looping = tail && (tail.kind === "loop" || (tail.kind === "single" && tail.count >= 3));
+  if (!looping) { b.hidden = true; return; }
+  b.textContent =
+    tail.kind === "loop"
+      ? `Looping · ${tail.block.join(" → ")} · ${tail.reps}×`
+      : `Repeating · ${tail.name} · ${tail.count}×`;
+  b.hidden = false;
+}
+
+function renderPath() {
+  const el = $("call-path");
+  if (!el) return;
+  const calls = modelCalls(PATH_WINDOW);
+  const names = calls.map((e) => e.name);
+  const empty = $("calls-empty");
+  const legend = $("calls-legend");
+  if (empty) empty.classList.toggle("hide", names.length > 0);
+  if (legend) legend.classList.toggle("hide", names.length === 0);
+  if (!names.length) {
+    el.innerHTML = "";
+    renderLoopBanner(null);
+    return;
+  }
+
+  const segs = parseSegments(names);
+  pathChipData = [];
+  el.innerHTML = segs
+    .map((s, idx) => {
+      const last = idx === segs.length - 1;
+      const arrow = idx > 0 ? `<span class="arrow">→</span>` : "";
+      const evs = calls.slice(s.start, s.start + s.len);
+      if (s.kind === "single") return arrow + chip(s.name, s.count, last, registerChip(s.name, evs));
+      const inner = s.block
+        .map((nm, k) => {
+          const chipEvs = [];
+          for (let r = 0; r < s.reps; r++) chipEvs.push(evs[r * s.block.length + k]);
+          return (k ? `<span class="arrow sm">→</span>` : "") + chip(nm, 1, false, registerChip(nm, chipEvs));
+        })
+        .join("");
+      return `${arrow}<span class="loop-group${last ? " cur" : ""}">${inner}<span class="count">×${s.reps}</span></span>`;
+    })
+    .join("");
+
+  const wrap = el.parentElement;
+  if (wrap) wrap.scrollTop = wrap.scrollHeight; // keep the newest call in view
+  renderLoopBanner(segs[segs.length - 1]);
+}
+
+function renderViz() {
+  renderStats();
+  if (currentView === "calls") renderPath();
+  else drawMap();
 }
 
 function startStream() {
@@ -263,7 +771,9 @@ function startStream() {
       const ev = JSON.parse(msg.data);
       events.push(ev);
       if (events.length > 500) events = events.slice(-500);
+      ingest(ev);
       renderFeed();
+      renderViz();
       // Bot lifecycle changes are worth reflecting in the Bots tab immediately.
       if (ev.kind === "bot") refreshBots();
     } catch {
@@ -283,6 +793,7 @@ $("ev-clear").addEventListener("click", async () => {
   await api("/api/events", { method: "DELETE" });
   events = [];
   renderFeed();
+  renderViz();
 });
 
 /* ------------------------------ console ----------------------------- */
@@ -394,6 +905,7 @@ $("tool-search").addEventListener("input", renderTools);
 async function loadTools() {
   try {
     allTools = (await api("/api/tools")).tools || [];
+    allTools.forEach((t) => (toolCat[t.name] = t.category));
     renderTools();
   } catch (e) {
     $("tools").innerHTML = `<div class="empty"><div class="big">Could not load tools</div><div>${esc(e.message)}</div></div>`;
@@ -405,6 +917,7 @@ async function loadTools() {
 refreshBots();
 loadTools();
 renderFeed();
+renderViz();
 startStream();
 // Bot changes arrive over SSE and refresh immediately; this is only a slow
 // safety net for state the stream can't see (e.g. a bot dying mid-request).
