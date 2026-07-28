@@ -207,6 +207,67 @@ const T = {
   "sum.pathfindTo": { en: "pathfind to ({to})", zh: "尋路前往 ({to})" },
 };
 
+/* Traditional-Chinese overlay for the console tool list, keyed by tool name.
+ * These are shown to the *student* on the web page only — the backend keeps
+ * serving the English docstrings, which are what the *model* actually reads.
+ * A tool with no entry here falls back to the English description from the API.
+ * Identifiers stay English on purpose: yaw / pitch, block & item names, X/Z,
+ * bot_name, pathfinder, the literal return strings ('coords, name', 'none', …). */
+const TOOL_DESC = {
+  // movement
+  move_forward: "向前走 ``blocks`` 格；回傳新的 position。",
+  move_backward: "向後走 ``blocks`` 格；回傳新的 position。",
+  move_left: "向左平移 ``blocks`` 格；回傳新的 position。",
+  move_right: "向右平移 ``blocks`` 格；回傳新的 position。",
+  jump: "跳一次；回傳新的 position。",
+  turn: "以目前面向為基準轉 ``degrees`` 度（正值 = 向左）。",
+  turn_left: "向左轉 90 度；回傳新的 (yaw, pitch)。",
+  turn_right: "向右轉 90 度；回傳新的 (yaw, pitch)。",
+  set_turn: "面向絕對的 ``yaw``（度）；回傳新的 (yaw, pitch)。",
+  look_at: "面向指定的世界座標；回傳新的 (yaw, pitch)。",
+  // pathfinder
+  load_pathfinder: "確保選定的 bot 已載入 mineflayer-pathfinder。",
+  pathfinder_status: "回傳 pathfinder 的移動／挖掘／建造狀態。",
+  pathfinder_stop: "取消目前的 pathfinder 任務並停止移動。",
+  pathfinder_clear_goal: "清除目前的 pathfinder 目標。",
+  pathfinder_goto_near: "阻塞直到 bot 抵達 ``(x, y, z)`` 的 ``radius`` 範圍內。",
+  pathfinder_goto_block: "阻塞直到 bot 精確抵達目標方塊。",
+  pathfinder_goto_get_to_block: "阻塞直到 bot 抵達目標方塊旁邊。",
+  pathfinder_goto_xz: "阻塞直到 bot 抵達目標 X/Z 座標柱；Y 不限。",
+  pathfinder_goto_near_xz: "阻塞直到 bot 抵達 X/Z 平面上的 ``radius`` 範圍內。",
+  pathfinder_goto_y: "阻塞直到 bot 抵達目標 Y 高度。",
+  pathfinder_set_goal_near: "設定一個在 ``(x, y, z)`` 附近的背景 pathfinder 目標。",
+  pathfinder_set_goal_block: "為某個精確方塊設定背景 pathfinder 目標。",
+  // interaction
+  hold: "從物品欄裝備名為 ``name`` 的物品；成功回傳 True。",
+  dig: "挖掉瞄準的方塊；回傳 'coords, name' 或 'none'。",
+  place: "把手上的方塊放到瞄準的面上；回傳 'coords, name' 或 'none'。",
+  unhold: "把手上的物品放回物品欄；手是空的則回傳 False。",
+  drop: "把物品丟到地上。",
+  use: "使用／啟動手上的物品；成功回傳 True。",
+  use_player: "對指定玩家的實體按右鍵（例如騎乘／堆疊）；成功回傳 True。",
+  sneak: "按住（``on=True``）或放開（``on=False``）潛行；回傳新的狀態。",
+  action: "請 quest server 執行某個具名動作（例如 'put out'）。",
+  chat: "向伺服器發送一則聊天訊息。",
+  set_height: "設定 bot 體型等級，1 到 5。",
+  // sensors
+  get_pos: "bot 目前的 (x, y, z) position。",
+  get_block: "指定世界座標的方塊名稱，或 'none'。",
+  look_block: "bot 目前看著的方塊，格式為 'coords, name'。",
+  find_block: "最近的 ``name`` 方塊座標（例如 'oak_log'）。",
+  find_blocks: "最多 ``max`` 個最近的 ``name`` 方塊，由近到遠；沒有則回傳 'empty'。",
+  get_block_in_front: "前方一步的實心方塊，格式為 'coords, name'；若只有空氣則回傳 'none'。",
+  get_block_property: "指定座標的方塊狀態屬性（例如 'lit'、'facing'、'powered'）。",
+  get_hand: "目前手上拿的物品，格式為 'name, count'，或 'none'。",
+  get_height: "bot 目前的體型等級，1 到 5。",
+  get_orientation: "目前面向，格式為 'yaw, pitch'（度）（yaw 0 = 北／-Z）。",
+  // lifecycle
+  list_bots: "列出 bot 名稱與 health 快照。用這裡的名稱作為 bot_name。",
+  check_bot_health: "查詢 list_bots 回傳的某個 bot 名稱的 health。",
+  get_active_bot: "回傳當 action tool 省略 bot_name 時目前使用的 bot。",
+  set_active_bot: "選擇 action tool 預設要使用哪個現有的 bot。",
+};
+
 const LANG_KEY = "mineai_lang";
 const SUPPORTED = ["zh", "en"];
 
@@ -268,12 +329,20 @@ function onLangChange(cb) {
   onChangeCb = cb;
 }
 
+/** Console tool description: zh overlay when available, else the English one
+ *  the backend served (which is also what the model reads). */
+function toolDesc(name, fallbackEn) {
+  if (lang === "zh" && TOOL_DESC[name]) return TOOL_DESC[name];
+  return fallbackEn;
+}
+
 window.i18n = {
   t,
   applyStatic,
   setLang,
   toggleLang,
   onLangChange,
+  toolDesc,
   get lang() {
     return lang;
   },
