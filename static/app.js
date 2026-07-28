@@ -137,6 +137,7 @@ async function refreshBots() {
     const bots = data.bots || [];
     ingestHealth(bots);
     renderViz();
+    updateDrawerBotChip();
     const host = $("bots");
     $("clear-closed").style.display = "none";
     if (!bots.length) {
@@ -815,104 +816,188 @@ $("ev-clear").addEventListener("click", async () => {
 /* ------------------------------ console ----------------------------- */
 
 let allTools = [];
+let selectedTool = null; // tool name currently shown in the bottom dock, or null
+const CAT_ORDER = ["movement", "interaction", "lifecycle", "sensors", "pathfinder", "other"];
 
-/** Build one input from a JSON-schema property. */
-function fieldFor(toolName, key, spec, required) {
-  const id = `arg-${toolName}-${key}`;
+const findTool = (name) => allTools.find((tl) => tl.name === name) || null;
+const catLabel = (cat) => t("cat." + cat);
+// The zh tool descriptions carry RST-style ``param`` markup meant for docs;
+// strip it for the compact card/dock UI, which already shows the param names
+// as field labels.
+const toolDesc = (tool) => window.i18n.toolDesc(tool.name, tool.description.split("\n")[0]).replace(/``/g, "");
+
+function updateDrawerBotChip() {
+  const dot = $("drawer-bot-dot");
+  const label = $("drawer-bot-name");
+  if (!dot || !label) return;
+  dot.className = "dot" + (activeBot ? " up" : "");
+  label.textContent = activeBot || t("console.noActiveBot");
+}
+
+/** One small grid card in the tool list; click selects/deselects it. */
+function toolCard(tool) {
+  const desc = toolDesc(tool);
+  return `
+    <div class="tool-card${selectedTool === tool.name ? " selected" : ""}" data-name="${esc(tool.name)}">
+      <div class="tc-name">${esc(tool.name)}</div>
+      <div class="tc-desc">${esc(desc)}</div>
+    </div>`;
+}
+
+function renderTools() {
+  const q = $("tool-search").value.trim().toLowerCase();
+  const shown = allTools.filter((tl) => !q || tl.name.includes(q) || tl.description.toLowerCase().includes(q));
+  const groups = {};
+  shown.forEach((tl) => (groups[tl.category] ||= []).push(tl));
+  const cats = CAT_ORDER.filter((c) => groups[c]?.length);
+  Object.keys(groups).forEach((c) => { if (!cats.includes(c)) cats.push(c); });
+
+  $("tools").innerHTML = cats.length
+    ? cats
+        .map(
+          (cat) => `
+        <div class="tool-group" data-cat="${esc(cat)}">
+          <h3>${esc(catLabel(cat))} · ${groups[cat].length}</h3>
+          <div class="tool-grid">${groups[cat].map(toolCard).join("")}</div>
+        </div>`,
+        )
+        .join("")
+    : `<div class="empty"><div class="big">${t("tools.empty")}</div></div>`;
+
+  $("drawer-cats").innerHTML = cats
+    .map((cat) => `<button type="button" class="cat" data-cat="${esc(cat)}">${esc(catLabel(cat))} · ${groups[cat].length}</button>`)
+    .join("");
+
+  $("tools")
+    .querySelectorAll(".tool-card")
+    .forEach((card) => card.addEventListener("click", () => selectTool(card.dataset.name)));
+  $("drawer-cats")
+    .querySelectorAll(".cat")
+    .forEach((btn) => btn.addEventListener("click", () => scrollToCat(btn.dataset.cat)));
+  highlightActiveCat();
+}
+
+function scrollToCat(cat) {
+  const container = $("drawer-scroll");
+  const section = $("tools").querySelector(`.tool-group[data-cat="${cat}"]`);
+  if (!container || !section) return;
+  container.scrollTo({ top: section.offsetTop - 8, behavior: "smooth" });
+}
+
+/** Highlight the nav pill for whichever category section sits at the scroll top. */
+function highlightActiveCat() {
+  const container = $("drawer-scroll");
+  const nav = $("drawer-cats");
+  const sections = [...$("tools").querySelectorAll(".tool-group")];
+  if (!container || !nav || !sections.length) return;
+  const top = container.getBoundingClientRect().top;
+  let active = sections[0].dataset.cat;
+  sections.forEach((sec) => {
+    if (sec.getBoundingClientRect().top <= top + 60) active = sec.dataset.cat;
+  });
+  nav.querySelectorAll(".cat").forEach((btn) => btn.classList.toggle("on", btn.dataset.cat === active));
+}
+
+/** Build one param input for the bottom dock. `coord` narrows x/y/z into a row. */
+function dockField(key, spec, required, coord) {
+  const id = `arg-${key}`;
   // Optional args are `anyOf: [{type: X}, {type: "null"}]`; unwrap to the real type.
   let type = spec.type;
   if (!type && Array.isArray(spec.anyOf)) {
     const real = spec.anyOf.find((s) => s.type && s.type !== "null");
     type = real?.type;
   }
+  if (type === "boolean") {
+    return `<div class="dock-field"><label class="dock-bool"><input type="checkbox" id="${id}" data-key="${esc(key)}" data-type="boolean" ${spec.default ? "checked" : ""} /><span>${esc(key)}</span></label></div>`;
+  }
   const hint = required
     ? t("hint.required")
     : spec.default !== undefined
       ? t("hint.default", { value: JSON.stringify(spec.default) })
       : t("hint.optionalField");
-
-  let input;
-  if (type === "boolean") {
-    input = `<div class="row-inline"><input type="checkbox" id="${id}" data-key="${esc(key)}" data-type="boolean" ${spec.default ? "checked" : ""} /></div>`;
-  } else if (type === "number" || type === "integer") {
-    input = `<input type="number" step="any" id="${id}" data-key="${esc(key)}" data-type="number" placeholder="${spec.default ?? ""}" />`;
-  } else {
-    input = `<input type="text" id="${id}" data-key="${esc(key)}" data-type="string" placeholder="${spec.default ?? ""}" autocomplete="off" />`;
-  }
-  return `<div class="field"><label for="${id}">${esc(key)} <span class="hint">· ${hint}</span></label>${input}</div>`;
+  const input =
+    type === "number" || type === "integer"
+      ? `<input type="number" step="any" id="${id}" data-key="${esc(key)}" data-type="number" placeholder="${spec.default ?? ""}" />`
+      : `<input type="text" id="${id}" data-key="${esc(key)}" data-type="string" placeholder="${spec.default ?? ""}" autocomplete="off" />`;
+  return `<div class="dock-field${coord ? " coord" : ""}"><label for="${id}">${esc(key)} <span class="hint">· ${hint}</span></label>${input}</div>`;
 }
 
-function toolCard(tool) {
+/** Select (or deselect, on repeat click) a tool and (re)draw the bottom dock.
+ *  bot_name is left out of the dock — the header's active-bot chip covers it,
+ *  and every tool already falls back to the active bot when it's omitted. */
+function selectTool(name) {
+  selectedTool = selectedTool === name ? null : name;
+  renderTools();
+  renderDock();
+}
+
+function renderDock() {
+  const dock = $("drawer-dock");
+  const tool = selectedTool ? findTool(selectedTool) : null;
+  if (!tool) {
+    dock.hidden = true;
+    dock.innerHTML = "";
+    return;
+  }
+
   const props = tool.schema?.properties || {};
   const required = tool.schema?.required || [];
-  const fields = Object.entries(props)
-    .map(([key, spec]) => fieldFor(tool.name, key, spec, required.includes(key)))
-    .join("");
-  return `
-    <details class="tool" data-name="${esc(tool.name)}">
-      <summary>
-        <span class="tname">${esc(tool.name)}</span>
-        <span class="tdesc">${esc(window.i18n.toolDesc(tool.name, tool.description.split("\n")[0]))}</span>
-      </summary>
-      <div class="tool-body">
-        ${fields ? `<div class="tool-args">${fields}</div>` : `<p class="note">${t("tool.noArgs")}</p>`}
-        <div class="tool-run">
-          <button class="btn primary small run-btn" data-name="${esc(tool.name)}">${t("btn.run")}</button>
-          <span class="muted" style="font-size:12px">${t("tool.runsAs")}</span>
-        </div>
-        <div class="tool-out" id="out-${esc(tool.name)}"></div>
-      </div>
-    </details>`;
+  const keys = Object.keys(props).filter((k) => k !== "bot_name");
+  const coordKeys = new Set(["x", "y", "z"].filter((k) => keys.includes(k)));
+  const isCoordGroup = coordKeys.size >= 2;
+  const fields = keys.map((key) => dockField(key, props[key], required.includes(key), isCoordGroup && coordKeys.has(key))).join("");
+  const desc = toolDesc(tool);
+
+  dock.hidden = false;
+  dock.innerHTML = `
+    <div class="dock-head">
+      <span class="dk-name">${esc(tool.name)}</span>
+      <span class="dk-desc">${esc(desc)}</span>
+      <span class="dk-close" id="dock-close">✕</span>
+    </div>
+    ${fields ? `<div class="dock-fields">${fields}</div>` : `<div class="dock-noargs">${t("tool.noArgs")}</div>`}
+    <div class="dock-run">
+      <button class="btn primary small" id="dock-run-btn">${t("btn.run")}</button>
+      <span class="as-human">${t("dock.asHuman")}</span>
+    </div>
+    <div class="dock-out" id="dock-out"></div>`;
+
+  $("dock-close").addEventListener("click", () => selectTool(null));
+  $("dock-run-btn").addEventListener("click", runSelectedTool);
 }
 
-function renderTools() {
-  const q = $("tool-search").value.trim().toLowerCase();
-  const shown = allTools.filter((t) => !q || t.name.includes(q) || t.description.toLowerCase().includes(q));
-  const groups = {};
-  shown.forEach((t) => (groups[t.category] ||= []).push(t));
-
-  $("tools").innerHTML = Object.keys(groups)
-    .sort()
-    .map(
-      (cat) =>
-        `<div class="tool-group"><h3>${esc(cat)} · ${groups[cat].length}</h3>${groups[cat].map(toolCard).join("")}</div>`,
-    )
-    .join("");
-
-  $("tools")
-    .querySelectorAll(".run-btn")
-    .forEach((btn) => btn.addEventListener("click", () => runTool(btn)));
-}
-
-async function runTool(btn) {
-  const name = btn.dataset.name;
-  const body = btn.closest(".tool-body");
-  const out = $("out-" + name);
+async function runSelectedTool() {
+  const tool = selectedTool ? findTool(selectedTool) : null;
+  if (!tool) return;
+  const btn = $("dock-run-btn");
+  const out = $("dock-out");
   const args = {};
 
-  body.querySelectorAll("[data-key]").forEach((input) => {
-    const key = input.dataset.key;
-    if (input.dataset.type === "boolean") {
-      args[key] = input.checked;
-    } else if (input.value.trim() !== "") {
-      args[key] = input.dataset.type === "number" ? Number(input.value) : input.value;
-    }
-    // Blank optional fields are omitted so the tool's own default applies.
-  });
+  $("drawer-dock")
+    .querySelectorAll("[data-key]")
+    .forEach((input) => {
+      const key = input.dataset.key;
+      if (input.dataset.type === "boolean") {
+        args[key] = input.checked;
+      } else if (input.value.trim() !== "") {
+        args[key] = input.dataset.type === "number" ? Number(input.value) : input.value;
+      }
+      // Blank optional fields are omitted so the tool's own default applies.
+    });
 
   btn.disabled = true;
   btn.textContent = t("btn.running");
-  out.className = "tool-out show";
+  out.className = "dock-out show";
   out.textContent = "…";
   try {
-    const res = await api(`/api/tools/${encodeURIComponent(name)}/invoke`, {
+    const res = await api(`/api/tools/${encodeURIComponent(tool.name)}/invoke`, {
       method: "POST",
       body: JSON.stringify(args),
     });
-    out.className = "tool-out show";
+    out.className = "dock-out show";
     out.textContent = typeof res.result === "string" ? res.result : JSON.stringify(res.result, null, 2);
   } catch (e) {
-    out.className = "tool-out show err";
+    out.className = "dock-out show err";
     out.textContent = e.message;
   } finally {
     btn.disabled = false;
@@ -921,11 +1006,12 @@ async function runTool(btn) {
 }
 
 $("tool-search").addEventListener("input", renderTools);
+$("drawer-scroll").addEventListener("scroll", highlightActiveCat, { passive: true });
 
 async function loadTools() {
   try {
     allTools = (await api("/api/tools")).tools || [];
-    allTools.forEach((t) => (toolCat[t.name] = t.category));
+    allTools.forEach((tl) => (toolCat[tl.name] = tl.category));
     renderTools();
   } catch (e) {
     $("tools").innerHTML = `<div class="empty"><div class="big">${t("tools.loadError.title")}</div><div>${esc(e.message)}</div></div>`;
@@ -944,6 +1030,8 @@ window.i18n.onLangChange(() => {
   renderFeed();
   renderViz();
   renderTools();
+  renderDock();
+  updateDrawerBotChip();
 });
 
 refreshBots();

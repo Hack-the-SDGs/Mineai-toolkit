@@ -132,10 +132,6 @@ const T = {
 
   /* ---- console drawer ---- */
   "drawer.title": { en: "Manual console", zh: "手動 Console" },
-  "note.console": {
-    en: 'These are the exact tools the model has. Run one yourself and it appears in Activity tagged <span class="src human">human</span>, right next to the model\'s own calls — watch it there while this stays open.',
-    zh: '這些就是 model 擁有的那些 tool。自己執行一個，它會以 <span class="src human">human</span> 標記出現在活動記錄裡，就在 model 自己的呼叫旁邊 —— 保持開啟就能在那邊即時觀察。',
-  },
   "ph.toolSearch": {
     en: "Filter tools… (e.g. move, dig, pathfinder)",
     zh: "篩選 tool…（例如 move、dig、pathfinder）",
@@ -143,14 +139,19 @@ const T = {
   "tool.noArgs": { en: "No arguments.", zh: "沒有參數。" },
   "btn.run": { en: "Run", zh: "執行" },
   "btn.running": { en: "Running…", zh: "執行中…" },
-  "tool.runsAs": {
-    en: 'runs as <span class="src human">human</span>',
-    zh: '以 <span class="src human">human</span> 身分執行',
-  },
+  "dock.asHuman": { en: "runs as HUMAN", zh: "以 HUMAN 身分執行" },
   "hint.required": { en: "required", zh: "必填" },
   "hint.optionalField": { en: "optional", zh: "選填" },
   "hint.default": { en: "default {value}", zh: "預設 {value}" },
   "tools.loadError.title": { en: "Could not load tools", zh: "無法載入 tools" },
+  "tools.empty": { en: "No matching tools", zh: "找不到符合的工具" },
+  "console.noActiveBot": { en: "no active bot", zh: "尚無使用中 bot" },
+  "cat.movement": { en: "Movement", zh: "移動" },
+  "cat.interaction": { en: "Interaction", zh: "互動" },
+  "cat.lifecycle": { en: "Lifecycle", zh: "生命週期" },
+  "cat.sensors": { en: "Sensors", zh: "感測" },
+  "cat.pathfinder": { en: "Pathfinder", zh: "路徑規劃" },
+  "cat.other": { en: "Other", zh: "其他" },
 
   /* ---- toasts ---- */
   "toast.nameRequired.title": { en: "Name required", zh: "需要名稱" },
