@@ -12,6 +12,11 @@
  * with data-i18n / data-i18n-ph / data-i18n-html and filled by applyStatic().
  */
 
+// Wrapped in an IIFE so nothing here leaks to global scope; the only public
+// surface is window.i18n (set below). Without this, top-level names like `t`
+// collide with app.js's own `const t`, throwing a SyntaxError that aborts the
+// whole page (stuck on "connecting…").
+(() => {
 const T = {
   /* ---- header ---- */
   "brand.tagline": {
@@ -280,3 +285,4 @@ applyStatic();
 document.addEventListener("click", (e) => {
   if (e.target.closest("#lang-toggle")) window.i18n.toggleLang();
 });
+})();
