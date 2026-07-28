@@ -852,7 +852,7 @@ function toolCard(tool) {
     <details class="tool" data-name="${esc(tool.name)}">
       <summary>
         <span class="tname">${esc(tool.name)}</span>
-        <span class="tdesc">${esc(tool.description.split("\n")[0])}</span>
+        <span class="tdesc">${esc(window.i18n.toolDesc(tool.name, tool.description.split("\n")[0]))}</span>
       </summary>
       <div class="tool-body">
         ${fields ? `<div class="tool-args">${fields}</div>` : `<p class="note">${t("tool.noArgs")}</p>`}
