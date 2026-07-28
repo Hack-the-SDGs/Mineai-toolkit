@@ -38,6 +38,8 @@ header.top {
 .brand h1 { font-size: 17px; margin: 0; letter-spacing: 0.2px; }
 .brand p { margin: 0; color: var(--muted); font-size: 12px; }
 
+.header-right { display: flex; align-items: center; gap: 10px; }
+#lang-toggle { min-width: 40px; font-weight: 600; }
 .server-state {
   display: flex; align-items: center; gap: 8px;
   background: var(--panel); border: 1px solid var(--border);
@@ -280,6 +282,8 @@ input[type="checkbox"] { width: auto; accent-color: var(--accent); }
 }
 .chip .dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
 .chip.cur { border-color: var(--accent); box-shadow: 0 0 0 1px rgba(78, 161, 255, 0.4); }
+@keyframes chip-pop { from { transform: scale(0.6); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+.chip.pop-in, .loop-group.pop-in { animation: chip-pop 0.22s ease-out; }
 .call-path .count { color: var(--muted); font-size: 11px; margin-left: 1px; }
 .call-path .arrow { color: #5f6b7a; font-size: 12px; }
 .call-path .arrow.sm { font-size: 11px; margin: 0 1px; }
