@@ -1,6 +1,7 @@
 /* MineAI control UI: bot panel, live activity timeline, manual tool console. */
 
 const API = "";
+const t = (key, params) => window.i18n.t(key, params);
 const $ = (id) => document.getElementById(id);
 const esc = (s) =>
   String(s).replace(/[&<>"']/g, (c) =>
@@ -90,10 +91,10 @@ const val = (id) => $(id).value.trim();
 
 function botCard(b) {
   const status = b.closed
-    ? `<span class="badge offline">closed</span>`
+    ? `<span class="badge offline">${t("badge.closed")}</span>`
     : b.connected && b.spawned
-      ? `<span class="badge online">online</span>`
-      : `<span class="badge pending">connecting</span>`;
+      ? `<span class="badge online">${t("badge.online")}</span>`
+      : `<span class="badge pending">${t("badge.connecting")}</span>`;
   // Bridge errors arrive with a full JS stack trace and absolute paths. The
   // first line carries the actual reason; the rest is noise on a student's
   // screen. The Activity tab still has the untruncated text.
@@ -105,24 +106,24 @@ function botCard(b) {
       <div class="id">
         <div class="name-row">
           <span class="name">${esc(b.name)}</span>
-          ${b.active ? '<span class="badge active">active</span>' : ""}
+          ${b.active ? `<span class="badge active">${t("badge.active")}</span>` : ""}
           ${status}
-          <span class="user">${b.username ? "@" + esc(b.username) : b.account ? "account: " + esc(b.account) : "—"}</span>
+          <span class="user">${b.username ? "@" + esc(b.username) : b.account ? t("bot.account", { name: esc(b.account) }) : "—"}</span>
         </div>
         <div class="stats">
-          <div class="stat"><span class="k">position</span><span class="v">${esc(pos)}</span></div>
-          <div class="stat"><span class="k">health</span><span class="v">${b.health ?? "—"}</span></div>
-          <div class="stat"><span class="k">food</span><span class="v">${b.food ?? "—"}</span></div>
-          <div class="stat"><span class="k">pathfinder</span><span class="v">${b.pathfinder_loaded ? "yes" : "no"}</span></div>
+          <div class="stat"><span class="k">${t("stat.position")}</span><span class="v">${esc(pos)}</span></div>
+          <div class="stat"><span class="k">${t("stat.health")}</span><span class="v">${b.health ?? "—"}</span></div>
+          <div class="stat"><span class="k">${t("stat.food")}</span><span class="v">${b.food ?? "—"}</span></div>
+          <div class="stat"><span class="k">${t("stat.pathfinder")}</span><span class="v">${b.pathfinder_loaded ? t("val.yes") : t("val.no")}</span></div>
         </div>
         ${why ? `<div class="why">${esc(why)}</div>` : ""}
       </div>
       <div class="actions">
-        <button class="btn small activate-btn" data-name="${esc(b.name)}" ${b.active || b.closed ? "disabled" : ""}>Set active</button>
+        <button class="btn small activate-btn" data-name="${esc(b.name)}" ${b.active || b.closed ? "disabled" : ""}>${t("btn.setActive")}</button>
         ${
           b.closed
-            ? `<button class="btn small danger forget-btn" data-name="${esc(b.name)}">Remove</button>`
-            : `<button class="btn small danger close-btn" data-name="${esc(b.name)}">Close</button>`
+            ? `<button class="btn small danger forget-btn" data-name="${esc(b.name)}">${t("btn.remove")}</button>`
+            : `<button class="btn small danger close-btn" data-name="${esc(b.name)}">${t("btn.close")}</button>`
         }
       </div>
     </div>`;
@@ -132,7 +133,7 @@ async function refreshBots() {
   try {
     const data = await api("/health");
     $("server-dot").className = "dot up";
-    $("server-label").textContent = "service up";
+    $("server-label").textContent = t("server.up");
     const bots = data.bots || [];
     ingestHealth(bots);
     renderViz();
@@ -140,9 +141,8 @@ async function refreshBots() {
     $("clear-closed").style.display = "none";
     if (!bots.length) {
       host.innerHTML = `<div class="empty">
-        <div class="big">No bots yet</div>
-        <div>Create one above. On camp machines use the account shorthand;
-        for dev testing leave it blank and the values come from <code>.env</code>.</div>
+        <div class="big">${t("bots.empty.title")}</div>
+        <div>${t("bots.empty.desc")}</div>
       </div>`;
       return;
     }
@@ -153,7 +153,7 @@ async function refreshBots() {
           await api(`/bots/${encodeURIComponent(btn.dataset.name)}/activate`, { method: "POST" });
           refreshBots();
         } catch (e) {
-          toast("Could not activate", e.message, true);
+          toast(t("toast.activateFail"), e.message, true);
         }
       }),
     );
@@ -163,7 +163,7 @@ async function refreshBots() {
           await api(`/bots/${encodeURIComponent(btn.dataset.name)}`, { method: "DELETE" });
           refreshBots();
         } catch (e) {
-          toast("Could not close", e.message, true);
+          toast(t("toast.closeFail"), e.message, true);
         }
       }),
     );
@@ -175,30 +175,33 @@ async function refreshBots() {
           await api(`/bots/${encodeURIComponent(btn.dataset.name)}/record`, { method: "DELETE" });
           refreshBots();
         } catch (e) {
-          toast("Could not remove", e.message, true);
+          toast(t("toast.removeFail"), e.message, true);
         }
       }),
     );
 
     const closed = bots.filter((b) => b.closed).length;
     $("clear-closed").style.display = closed ? "" : "none";
-    $("clear-closed").textContent = `Remove ${closed} closed`;
+    $("clear-closed").textContent = t("btn.removeNClosed", { n: closed });
   } catch (e) {
     $("server-dot").className = "dot down";
-    $("server-label").textContent = "service down";
+    $("server-label").textContent = t("server.down");
   }
 }
 
-$("adv-toggle").addEventListener("click", () => {
+function updateAdvToggle() {
   const adv = $("adv");
-  adv.classList.toggle("open");
-  $("adv-toggle").textContent = (adv.classList.contains("open") ? "▾" : "▸") + " Advanced connection options";
+  $("adv-toggle").textContent = (adv.classList.contains("open") ? "▾" : "▸") + " " + t("btn.advOptions");
+}
+$("adv-toggle").addEventListener("click", () => {
+  $("adv").classList.toggle("open");
+  updateAdvToggle();
 });
 
 $("create-form").addEventListener("submit", async (ev) => {
   ev.preventDefault();
   const name = val("f-name");
-  if (!name) return toast("Name required", "Give the bot a unique name.", true);
+  if (!name) return toast(t("toast.nameRequired.title"), t("toast.nameRequired.msg"), true);
 
   const body = { name, wait_spawn: $("f-wait").checked };
   if (val("f-account")) body.account = val("f-account");
@@ -214,18 +217,18 @@ $("create-form").addEventListener("submit", async (ev) => {
 
   const btn = $("create-btn");
   btn.disabled = true;
-  btn.textContent = "Creating…";
+  btn.textContent = t("btn.creating");
   try {
     await api("/bots", { method: "POST", body: JSON.stringify(body) });
-    toast("Bot created", `${name} is connected.`);
+    toast(t("toast.botCreated.title"), t("toast.botCreated.msg", { name }));
     $("f-name").value = "";
     $("f-password").value = "";
     refreshBots();
   } catch (e) {
-    toast("Could not create bot", e.message, true);
+    toast(t("toast.createFail"), e.message, true);
   } finally {
     btn.disabled = false;
-    btn.textContent = "Create bot";
+    btn.textContent = t("btn.createBot");
   }
 });
 
@@ -234,10 +237,10 @@ $("refresh-btn").addEventListener("click", refreshBots);
 $("clear-closed").addEventListener("click", async () => {
   try {
     const res = await api("/bots/closed", { method: "DELETE" });
-    toast("Removed", `${res.removed.length} closed bot(s) removed.`);
+    toast(t("toast.removed.title"), t("toast.removed.msg", { n: res.removed.length }));
     refreshBots();
   } catch (e) {
-    toast("Could not remove", e.message, true);
+    toast(t("toast.removeFail"), e.message, true);
   }
 });
 
@@ -363,39 +366,42 @@ function summaryText(ev) {
   const a = ev.arguments || {};
   switch (ev.name) {
     case "move_forward": case "move_backward": case "move_left": case "move_right":
-      return `walked ${MOVE_VERB[ev.name]} ${a.blocks ?? 1}`;
-    case "jump": return "jumped";
-    case "turn": return `turned ${a.degrees ?? "?"}°`;
-    case "turn_left": return "turned left 90°";
-    case "turn_right": return "turned right 90°";
-    case "set_turn": return `faced yaw ${a.yaw ?? "?"}°`;
-    case "look_at": return `looked at (${a.x}, ${a.y}, ${a.z})`;
-    case "dig": return "dug the block in front";
-    case "place": return "placed the held block";
-    case "use": return "used the held item";
-    case "use_player": return `right-clicked ${a.username ?? "a player"}`;
-    case "hold": return `equipped ${a.name ?? "?"}`;
-    case "unhold": return "put the held item away";
-    case "drop": return a.item ? `dropped ${a.item}${a.count ? ` ×${a.count}` : ""}` : "dropped the held item";
-    case "sneak": return a.on ? "started sneaking" : "stopped sneaking";
-    case "action": return `action "${a.name ?? "?"}"${a.value != null ? ` (${a.value})` : ""}`;
-    case "chat": return `“${a.message ?? ""}”`;
-    case "set_height": return `set size to ${a.level ?? "?"}`;
-    case "get_pos": return "read position";
-    case "get_orientation": return "read facing";
-    case "get_block": return `read block at (${a.x}, ${a.y}, ${a.z})`;
-    case "get_block_property": return `read ${a.property_name ?? "property"} at (${a.x}, ${a.y}, ${a.z})`;
-    case "find_block": return `searched for ${a.name ?? "?"}`;
-    case "find_blocks": return `searched for ${a.name ?? "?"} (×${a.max ?? 16})`;
-    case "look_block": return "read the block it's aiming at";
-    case "get_block_in_front": return "read the block in front";
-    case "get_hand": return "checked its hand";
-    case "get_height": return "read its size";
-    case "set_active_bot": return `made ${a.bot_name ?? "?"} active`;
+      return t("sum.walk", { dir: t("dir." + MOVE_VERB[ev.name]), blocks: a.blocks ?? 1 });
+    case "jump": return t("sum.jump");
+    case "turn": return t("sum.turn", { deg: a.degrees ?? "?" });
+    case "turn_left": return t("sum.turnLeft");
+    case "turn_right": return t("sum.turnRight");
+    case "set_turn": return t("sum.setTurn", { yaw: a.yaw ?? "?" });
+    case "look_at": return t("sum.lookAt", { x: a.x, y: a.y, z: a.z });
+    case "dig": return t("sum.dig");
+    case "place": return t("sum.place");
+    case "use": return t("sum.use");
+    case "use_player": return t("sum.usePlayer", { who: a.username ?? t("sum.aPlayer") });
+    case "hold": return t("sum.hold", { name: a.name ?? "?" });
+    case "unhold": return t("sum.unhold");
+    case "drop":
+      return a.item
+        ? t("sum.drop", { item: a.item, count: a.count ? ` ×${a.count}` : "" })
+        : t("sum.dropHeld");
+    case "sneak": return a.on ? t("sum.sneakOn") : t("sum.sneakOff");
+    case "action": return t("sum.action", { name: a.name ?? "?", value: a.value != null ? ` (${a.value})` : "" });
+    case "chat": return t("sum.chat", { message: a.message ?? "" });
+    case "set_height": return t("sum.setHeight", { level: a.level ?? "?" });
+    case "get_pos": return t("sum.getPos");
+    case "get_orientation": return t("sum.getOrientation");
+    case "get_block": return t("sum.getBlock", { x: a.x, y: a.y, z: a.z });
+    case "get_block_property": return t("sum.getBlockProperty", { property: a.property_name ?? "property", x: a.x, y: a.y, z: a.z });
+    case "find_block": return t("sum.findBlock", { name: a.name ?? "?" });
+    case "find_blocks": return t("sum.findBlocks", { name: a.name ?? "?", max: a.max ?? 16 });
+    case "look_block": return t("sum.lookBlock");
+    case "get_block_in_front": return t("sum.getBlockInFront");
+    case "get_hand": return t("sum.getHand");
+    case "get_height": return t("sum.getHeight");
+    case "set_active_bot": return t("sum.setActiveBot", { name: a.bot_name ?? "?" });
     default:
       if (ev.name.startsWith("pathfinder_goto")) {
         const to = [a.x, a.y, a.z].filter((v) => v != null).join(", ");
-        return `pathfind to (${to})`;
+        return t("sum.pathfindTo", { to });
       }
       if (ev.name.startsWith("pathfinder_")) return ev.name.replace(/_/g, " ");
       return ev.name.replace(/_/g, " ");
@@ -410,8 +416,8 @@ function renderFeed() {
 
   if (!rows.length) {
     $("feed").innerHTML = `<div class="empty">
-      <div class="big">Nothing yet</div>
-      <div>Ask the model to do something with a bot, or run a tool from the Console tab.</div>
+      <div class="big">${t("feed.empty.title")}</div>
+      <div>${t("feed.empty.desc")}</div>
     </div>`;
     return;
   }
@@ -435,9 +441,9 @@ function renderFeed() {
         </div>
         <div class="ev-summary">${esc(summaryText(ev))}${r ? ` <span class="r ${r.err ? "err" : ""}">${r.err ? "" : "→ "}${esc(r.txt)}</span>` : ""}</div>
         <div class="ev-detail">
-          <div class="lbl">Arguments</div>
+          <div class="lbl">${t("lbl.arguments")}</div>
           <pre>${esc(JSON.stringify(ev.arguments ?? null, null, 2))}</pre>
-          <div class="lbl">${ev.error ? "Error" : "Result"}</div>
+          <div class="lbl">${ev.error ? t("lbl.error") : t("lbl.result")}</div>
           <pre>${esc(ev.error || JSON.stringify(ev.result ?? null, null, 2))}</pre>
         </div>
       </div>`;
@@ -464,14 +470,14 @@ function renderStats() {
   const maxc = top.length ? top[0][1] : 1;
 
   el.innerHTML = `
-    <div class="stat-tile"><div class="st-k">tool calls</div><div class="st-v">${total}</div></div>
+    <div class="stat-tile"><div class="st-k">${t("st.toolCalls")}</div><div class="st-v">${total}</div></div>
     <div class="stat-tile">
-      <div class="st-k">model / human</div>
+      <div class="st-k">${t("st.modelHuman")}</div>
       <div class="st-v"><span style="color:var(--purple)">${model}</span> <span class="muted">/</span> <span style="color:var(--green)">${human}</span></div>
     </div>
-    <div class="stat-tile spark"><div class="st-k">calls / last 60s</div><canvas id="spark-canvas"></canvas></div>
+    <div class="stat-tile spark"><div class="st-k">${t("st.calls60")}</div><canvas id="spark-canvas"></canvas></div>
     <div class="stat-tile">
-      <div class="st-k">top tools</div>
+      <div class="st-k">${t("st.topTools")}</div>
       <div class="toplist">${
         top.length
           ? top.map(([n, c]) => `<div class="tl"><span class="tl-n">${esc(n)}</span><span class="tl-bar"><i style="width:${round((c / maxc) * 100)}%"></i></span><span class="tl-c">${c}</span></div>`).join("")
@@ -672,6 +678,7 @@ function parseSegments(names) {
 // Each rendered chip registers the call(s) it stands for; the hover popover
 // reads this by index (data-ci) to show the real arguments/result.
 let pathChipData = [];
+let lastPathId = 0; // id of the newest call last drawn — so only real additions animate
 function registerChip(name, evs) {
   return pathChipData.push({ name, evs }) - 1;
 }
@@ -686,15 +693,15 @@ function showCallPop(chipEl) {
   const pop = $("call-pop");
   if (!d || !pop) return;
   const last = d.evs[d.evs.length - 1];
-  let html = `<div class="cp-head"><span class="cp-name">${esc(d.name)}</span>${d.evs.length > 1 ? `<span class="cp-n">${d.evs.length} calls</span>` : ""}</div>`;
+  let html = `<div class="cp-head"><span class="cp-name">${esc(d.name)}</span>${d.evs.length > 1 ? `<span class="cp-n">${t("cp.nCalls", { n: d.evs.length })}</span>` : ""}</div>`;
   if (last) {
-    html += `<div class="cp-time">${fmtTime(last.timestamp)}${last.duration_ms != null ? ` · ${last.duration_ms} ms` : ""}${d.evs.length > 1 ? " · latest" : ""}</div>`;
+    html += `<div class="cp-time">${fmtTime(last.timestamp)}${last.duration_ms != null ? ` · ${last.duration_ms} ms` : ""}${d.evs.length > 1 ? " · " + t("cp.latest") : ""}</div>`;
     const a = last.arguments && Object.keys(last.arguments).length ? JSON.stringify(last.arguments) : "—";
-    html += `<div class="cp-lbl">args</div><div class="cp-val">${esc(a)}</div>`;
+    html += `<div class="cp-lbl">${t("cp.args")}</div><div class="cp-val">${esc(a)}</div>`;
     const res = last.error
       ? String(last.error).split(/\n/)[0]
       : resultText(last.result) || (last.result != null ? JSON.stringify(last.result) : "—");
-    html += `<div class="cp-lbl">${last.error ? "error" : "result"}</div><div class="cp-val${last.error ? " err" : ""}">${esc(String(res).slice(0, 240))}</div>`;
+    html += `<div class="cp-lbl">${last.error ? t("cp.error") : t("cp.result")}</div><div class="cp-val${last.error ? " err" : ""}">${esc(String(res).slice(0, 240))}</div>`;
   }
   pop.innerHTML = html;
   pop.hidden = false;
@@ -714,8 +721,8 @@ function renderLoopBanner(tail) {
   if (!looping) { b.hidden = true; return; }
   b.textContent =
     tail.kind === "loop"
-      ? `Looping · ${tail.block.join(" → ")} · ${tail.reps}×`
-      : `Repeating · ${tail.name} · ${tail.count}×`;
+      ? t("loop.looping", { block: tail.block.join(" → "), reps: tail.reps })
+      : t("loop.repeating", { name: tail.name, count: tail.count });
   b.hidden = false;
 }
 
@@ -753,6 +760,15 @@ function renderPath() {
     })
     .join("");
 
+  // Animate only the current chip, and only when a new call actually arrived
+  // (skip re-renders from health polls / view toggles).
+  const newestId = calls.length ? calls[calls.length - 1].id : 0;
+  if (newestId && newestId !== lastPathId) {
+    const cur = el.querySelector(".cur");
+    if (cur) cur.classList.add("pop-in");
+  }
+  lastPathId = newestId;
+
   const wrap = el.parentElement;
   if (wrap) wrap.scrollTop = wrap.scrollHeight; // keep the newest call in view
   renderLoopBanner(segs[segs.length - 1]);
@@ -783,7 +799,7 @@ function startStream() {
   source.onerror = () => {
     // EventSource retries on its own; surface the state instead of reconnecting.
     $("server-dot").className = "dot down";
-    $("server-label").textContent = "stream lost — retrying";
+    $("server-label").textContent = t("server.streamLost");
   };
 }
 
@@ -809,7 +825,11 @@ function fieldFor(toolName, key, spec, required) {
     const real = spec.anyOf.find((s) => s.type && s.type !== "null");
     type = real?.type;
   }
-  const hint = required ? "required" : spec.default !== undefined ? `default ${JSON.stringify(spec.default)}` : "optional";
+  const hint = required
+    ? t("hint.required")
+    : spec.default !== undefined
+      ? t("hint.default", { value: JSON.stringify(spec.default) })
+      : t("hint.optionalField");
 
   let input;
   if (type === "boolean") {
@@ -835,10 +855,10 @@ function toolCard(tool) {
         <span class="tdesc">${esc(tool.description.split("\n")[0])}</span>
       </summary>
       <div class="tool-body">
-        ${fields ? `<div class="tool-args">${fields}</div>` : '<p class="note">No arguments.</p>'}
+        ${fields ? `<div class="tool-args">${fields}</div>` : `<p class="note">${t("tool.noArgs")}</p>`}
         <div class="tool-run">
-          <button class="btn primary small run-btn" data-name="${esc(tool.name)}">Run</button>
-          <span class="muted" style="font-size:12px">runs as <span class="src human">human</span></span>
+          <button class="btn primary small run-btn" data-name="${esc(tool.name)}">${t("btn.run")}</button>
+          <span class="muted" style="font-size:12px">${t("tool.runsAs")}</span>
         </div>
         <div class="tool-out" id="out-${esc(tool.name)}"></div>
       </div>
@@ -881,7 +901,7 @@ async function runTool(btn) {
   });
 
   btn.disabled = true;
-  btn.textContent = "Running…";
+  btn.textContent = t("btn.running");
   out.className = "tool-out show";
   out.textContent = "…";
   try {
@@ -896,7 +916,7 @@ async function runTool(btn) {
     out.textContent = e.message;
   } finally {
     btn.disabled = false;
-    btn.textContent = "Run";
+    btn.textContent = t("btn.run");
   }
 }
 
@@ -908,11 +928,23 @@ async function loadTools() {
     allTools.forEach((t) => (toolCat[t.name] = t.category));
     renderTools();
   } catch (e) {
-    $("tools").innerHTML = `<div class="empty"><div class="big">Could not load tools</div><div>${esc(e.message)}</div></div>`;
+    $("tools").innerHTML = `<div class="empty"><div class="big">${t("tools.loadError.title")}</div><div>${esc(e.message)}</div></div>`;
   }
 }
 
 /* ------------------------------- boot ------------------------------- */
+
+updateAdvToggle();
+
+// Re-render every dynamic surface when the language changes. Static markup is
+// handled by i18n.applyStatic(); these are the JS-built pieces.
+window.i18n.onLangChange(() => {
+  updateAdvToggle();
+  refreshBots();
+  renderFeed();
+  renderViz();
+  renderTools();
+});
 
 refreshBots();
 loadTools();
