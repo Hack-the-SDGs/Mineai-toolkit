@@ -4,13 +4,15 @@ version = "0.1.0"
 description = "An MCP server exposing the minethon Mineflayer bot as model-callable tools."
 authors = [{ name = "reep_c", email = "reep_c@outlook.com" }]
 requires-python = ">=3.14,<4.0.0"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.14",
+]
 dependencies = [
     "mcp (>=1.28.0,<2.0.0)",
     "fastmcp (>=3.4.2,<4.0.0)",
     "anyio (>=4.0.0,<5.0.0)",
     "python-dotenv (>=1.0.0,<2.0.0)",
-    # Pulled in by fastmcp, but imported directly by this project — declare them
-    # so a fastmcp dependency change can't silently break the service.
     "starlette (>=0.40,<2.0)",
     "uvicorn (>=0.30,<1.0)",
     "minethon (>=0.4.9,<0.5.0)",
@@ -18,20 +20,28 @@ dependencies = [
 
 [project.scripts]
 mineai-control = "main:main"
-# Retired: exits with instructions. See main.stdio_removed.
 mineai-mcp = "main:stdio_removed"
 
-[tool.poetry]
-# Flat layout: server.py / main.py are top-level modules, tools/ is a package.
-packages = [
-    { include = "tools" },
-    { include = "bot_manager.py" },
-    { include = "bot_session.py" },
-    { include = "control_api.py" },
-    { include = "server.py" },
-    { include = "main.py" },
+[tool.hatch.build.targets.sdist]
+include = [
+    "tools",
+    "bot_manager.py",
+    "bot_session.py",
+    "control_api.py",
+    "server.py",
+    "main.py",
+]
+
+[tool.hatch.build.targets.wheel]
+include = [
+    "tools",
+    "bot_manager.py",
+    "bot_session.py",
+    "control_api.py",
+    "server.py",
+    "main.py",
 ]
 
 [build-system]
-requires = ["poetry-core>=2.0.0,<3.0.0"]
-build-backend = "poetry.core.masonry.api"
+requires = ["hatchling"]
+build-backend = "hatchling.build"
