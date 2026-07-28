@@ -17,7 +17,6 @@ from typing import Any
 
 from minethon import Bot, EventAdaptor
 from minethon._bridge import get_mineflayer
-from minethon._event_login import resolve_account
 
 from event_log import log as activity
 from logging_setup import get_logger
@@ -399,6 +398,19 @@ class BotManager:
     @staticmethod
     def _resolve_options(account: str | None, options: CreateOptions) -> CreateOptions:
         if account is not None:
+            # Camp-day "Account shorthand" path: minethon derives the account
+            # from ~/.htsdg.json. Imported lazily so the server still boots for
+            # the .env dev-test path when this optional minethon module is absent
+            # (older/plain minethon builds ship without minethon._event_login).
+            try:
+                from minethon._event_login import resolve_account
+            except ImportError as exc:
+                raise RuntimeError(
+                    "Account shorthand needs minethon's account resolver "
+                    "(minethon._event_login), which the installed minethon does "
+                    "not provide. Leave the shorthand blank and use .env instead "
+                    "(see the setup docs, step 5c)."
+                ) from exc
             return {**resolve_account(account), **options}
         resolved = {**_env_options(), **options}
         # A password with no auth mode means offline mode in minecraft-protocol
