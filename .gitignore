@@ -1,6 +1,7 @@
 */__pycache__
 /__pycache__
 .ruff_cache/
+.idea/
 
 # Dev/test credentials. Only .env.example belongs in git.
 .env
