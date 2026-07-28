@@ -897,20 +897,18 @@ files = [
 
 [[package]]
 name = "minethon"
-version = "0.3.1"
+version = "0.4.9"
 description = "A Python-first Mineflayer SDK with a synchronous, IDE-friendly callback API."
 optional = false
 python-versions = ">=3.14"
 groups = ["main"]
-files = []
-develop = true
+files = [
+    {file = "minethon-0.4.9-py3-none-any.whl", hash = "sha256:db8b43cf7149aa00676557c415454b838fb9bcff71a41c1eebf19bcb66c8068d"},
+    {file = "minethon-0.4.9.tar.gz", hash = "sha256:6c83c791dcbeeea533880b2cb1c9d7f7c225bedd2db4c3aee4e3825cc1b9ed59"},
+]
 
 [package.dependencies]
 javascript = ">=1!1.2.6,<1!1.3"
-
-[package.source]
-type = "directory"
-url = "../minethon"
 
 [[package]]
 name = "more-itertools"
@@ -1934,4 +1932,4 @@ files = [
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.14,<4.0.0"
-content-hash = "bad829b060afc78baf5376e496f12bf84af510b31aafeba6b386c636adc89043"
+content-hash = "ecb2bb8488bc8b31444857ab683661cf8eecb682c1ab120f434a387e4b38388e"
