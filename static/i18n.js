@@ -78,7 +78,7 @@ const T = {
 
   /* ---- activity card ---- */
   "activity.title": { en: "Activity", zh: "活動記錄" },
-  "btn.console": { en: "Console", zh: "Console" },
+  "btn.console": { en: "Console", zh: "控制台" },
   "filter.allSources": { en: "All sources", zh: "所有來源" },
   "filter.modelOnly": { en: "Model only", zh: "只看 model" },
   "filter.humanOnly": { en: "Human only", zh: "只看 human" },
@@ -131,7 +131,7 @@ const T = {
   "cp.error": { en: "error", zh: "error" },
 
   /* ---- console drawer ---- */
-  "drawer.title": { en: "Manual console", zh: "手動 Console" },
+  "drawer.title": { en: "Manual console", zh: "手動控制台" },
   "ph.toolSearch": {
     en: "Filter tools… (e.g. move, dig, pathfinder)",
     zh: "篩選 tool…（例如 move、dig、pathfinder）",

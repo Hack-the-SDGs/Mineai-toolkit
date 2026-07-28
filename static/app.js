@@ -34,28 +34,53 @@ function toast(title, message, isError = false) {
 
 /* ------------------------------- tabs ------------------------------- */
 
-/* Manual console lives in a slide-over drawer so it can open on top of the bots
-   sidebar without hiding the Activity feed — you drive a bot, then watch its
-   effect (and the model's) land in the timeline that stays visible alongside. */
+/* Manual console docks as a 3rd column beside Activity on desktop (collapsing
+   it hands that space back to the feed), and falls back to a slide-over
+   overlay on narrow screens where there's no room for 3 columns side by side. */
 const drawer = $("console-drawer");
 const scrim = $("drawer-scrim");
-const openConsole = () => {
-  drawer.classList.add("open");
-  drawer.setAttribute("aria-hidden", "false");
-  scrim.hidden = false;
-  $("tool-search").focus();
+const isNarrowScreen = () => window.matchMedia("(max-width: 900px)").matches;
+
+const setConsoleOpen = (open, opts = {}) => {
+  drawer.classList.toggle("open", open);
+  drawer.setAttribute("aria-hidden", open ? "false" : "true");
+  scrim.hidden = !(open && isNarrowScreen());
+  if (open && opts.focus) $("tool-search").focus();
 };
-const closeConsole = () => {
-  drawer.classList.remove("open");
-  drawer.setAttribute("aria-hidden", "true");
-  scrim.hidden = true;
-};
-$("console-toggle").addEventListener("click", openConsole);
+const openConsole = () => setConsoleOpen(true, { focus: true });
+const closeConsole = () => setConsoleOpen(false);
+const toggleConsole = () => setConsoleOpen(!drawer.classList.contains("open"));
+
+$("console-toggle").addEventListener("click", toggleConsole);
 $("console-close").addEventListener("click", closeConsole);
 scrim.addEventListener("click", closeConsole);
 document.addEventListener("keydown", (e) => {
   if (e.key === "Escape" && drawer.classList.contains("open")) closeConsole();
 });
+
+// Desktop: docked open by default. Narrow screens: starts closed, since
+// opening it there covers the page as a slide-over overlay instead.
+setConsoleOpen(!isNarrowScreen());
+
+/* The docked console's sticky `top` (and thus its `height: calc(100vh - top -
+   20px)`, see style.css) needs to match where .layout actually starts, which
+   moves whenever the header above it changes height — it wraps at some
+   widths, and the zh/en taglines are different lengths. A hardcoded px value
+   drifts out of sync and the panel overflows past the viewport bottom, so
+   this is measured from the live layout instead and kept current via a
+   ResizeObserver on the header plus a window resize listener. */
+function syncConsoleDockTop() {
+  const layout = document.querySelector(".layout");
+  if (!layout) return;
+  const top = layout.getBoundingClientRect().top + window.scrollY;
+  document.documentElement.style.setProperty("--dock-top", `${Math.round(top)}px`);
+}
+syncConsoleDockTop();
+window.addEventListener("resize", syncConsoleDockTop);
+const headerEl = document.querySelector("header.top");
+if (headerEl && window.ResizeObserver) {
+  new ResizeObserver(syncConsoleDockTop).observe(headerEl);
+}
 
 /* Map | Calls toggle for the big visualization panel. */
 document.querySelectorAll(".viz-toggle .seg").forEach((btn) => {
@@ -857,7 +882,7 @@ function renderTools() {
         .map(
           (cat) => `
         <div class="tool-group" data-cat="${esc(cat)}">
-          <h3>${esc(catLabel(cat))} · ${groups[cat].length}</h3>
+          <h3>${esc(catLabel(cat))}(${groups[cat].length})</h3>
           <div class="tool-grid">${groups[cat].map(toolCard).join("")}</div>
         </div>`,
         )
@@ -865,7 +890,7 @@ function renderTools() {
     : `<div class="empty"><div class="big">${t("tools.empty")}</div></div>`;
 
   $("drawer-cats").innerHTML = cats
-    .map((cat) => `<button type="button" class="cat" data-cat="${esc(cat)}">${esc(catLabel(cat))} · ${groups[cat].length}</button>`)
+    .map((cat) => `<button type="button" class="cat" data-cat="${esc(cat)}">${esc(catLabel(cat))}(${groups[cat].length})</button>`)
     .join("");
 
   $("tools")
@@ -1032,6 +1057,7 @@ window.i18n.onLangChange(() => {
   renderTools();
   renderDock();
   updateDrawerBotChip();
+  syncConsoleDockTop();
 });
 
 refreshBots();
