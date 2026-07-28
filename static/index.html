@@ -162,31 +162,31 @@
           </div>
         </section>
         </main>
+
+        <!-- ================= CONSOLE (docked 3rd column on desktop; slide-over overlay on narrow screens) ================= -->
+        <div class="drawer-scrim" id="drawer-scrim" hidden></div>
+        <aside class="drawer" id="console-drawer" aria-hidden="true">
+          <div class="drawer-head">
+            <h2 data-i18n="drawer.title">Manual console</h2>
+            <div class="drawer-bot-chip" id="drawer-bot-chip">
+              <span class="dot" id="drawer-bot-dot"></span>
+              <span id="drawer-bot-name">—</span>
+            </div>
+            <button class="btn ghost small" id="console-close" aria-label="Close console">✕</button>
+          </div>
+          <div class="drawer-search">
+            <input type="text" id="tool-search" placeholder="Filter tools… (e.g. move, dig, pathfinder)" data-i18n-ph="ph.toolSearch" autocomplete="off" />
+          </div>
+          <nav class="drawer-cats" id="drawer-cats"></nav>
+          <div class="drawer-body" id="drawer-scroll">
+            <div id="tools"></div>
+          </div>
+          <div class="drawer-dock" id="drawer-dock" hidden></div>
+        </aside>
         </div>
       </section>
 
     </div>
-
-    <!-- ================= CONSOLE (slide-over panel, docked right) ================= -->
-    <div class="drawer-scrim" id="drawer-scrim" hidden></div>
-    <aside class="drawer" id="console-drawer" aria-hidden="true">
-      <div class="drawer-head">
-        <h2 data-i18n="drawer.title">Manual console</h2>
-        <div class="drawer-bot-chip" id="drawer-bot-chip">
-          <span class="dot" id="drawer-bot-dot"></span>
-          <span id="drawer-bot-name">—</span>
-        </div>
-        <button class="btn ghost small" id="console-close" aria-label="Close console">✕</button>
-      </div>
-      <div class="drawer-search">
-        <input type="text" id="tool-search" placeholder="Filter tools… (e.g. move, dig, pathfinder)" data-i18n-ph="ph.toolSearch" autocomplete="off" />
-      </div>
-      <nav class="drawer-cats" id="drawer-cats"></nav>
-      <div class="drawer-body" id="drawer-scroll">
-        <div id="tools"></div>
-      </div>
-      <div class="drawer-dock" id="drawer-dock" hidden></div>
-    </aside>
 
     <div class="call-pop" id="call-pop" hidden></div>
 
