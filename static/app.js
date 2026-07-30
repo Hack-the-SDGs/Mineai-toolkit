@@ -9,10 +9,31 @@ const esc = (s) =>
   );
 
 async function api(path, options = {}) {
-  const res = await fetch(API + path, {
-    headers: { "content-type": "application/json" },
-    ...options,
-  });
+  // Optional client-side timeout so a request that never returns (e.g. a bot
+  // that joins and is kicked before it ever spawns) can't leave a button stuck
+  // in its "…" state forever. `timeoutMs` is stripped before hitting fetch.
+  const { timeoutMs, ...fetchOptions } = options;
+  let controller = null;
+  let timer = null;
+  if (timeoutMs) {
+    controller = new AbortController();
+    timer = setTimeout(() => controller.abort(), timeoutMs);
+    fetchOptions.signal = controller.signal;
+  }
+  let res;
+  try {
+    res = await fetch(API + path, {
+      headers: { "content-type": "application/json" },
+      ...fetchOptions,
+    });
+  } catch (e) {
+    if (controller && e.name === "AbortError") {
+      throw new Error(t("toast.createTimeout"));
+    }
+    throw e;
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
   const text = await res.text();
   let body = null;
   try {
@@ -245,7 +266,10 @@ $("create-form").addEventListener("submit", async (ev) => {
   btn.disabled = true;
   btn.textContent = t("btn.creating");
   try {
-    await api("/bots", { method: "POST", body: JSON.stringify(body) });
+    // Timeout sits just above the server's spawn wait (MINEAI_SPAWN_TIMEOUT,
+    // 30s) so a legitimately slow spawn still lands, but a truly wedged request
+    // still releases the button instead of leaving it on "Creating…".
+    await api("/bots", { method: "POST", body: JSON.stringify(body), timeoutMs: 45000 });
     toast(t("toast.botCreated.title"), t("toast.botCreated.msg", { name }));
     $("f-name").value = "";
     $("f-password").value = "";

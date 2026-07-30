@@ -12,7 +12,7 @@ import os
 import time
 from collections.abc import Iterable
 from dataclasses import dataclass, field
-from threading import RLock
+from threading import Event, RLock
 from typing import Any
 
 from minethon import Bot, EventAdaptor
@@ -22,6 +22,13 @@ from event_log import log as activity
 from logging_setup import get_logger
 
 CreateOptions = dict[str, Any]
+
+# How long create_bot waits for a bot to spawn before giving up. A bot that
+# joins a level that has not been started yet is kicked back out before `spawn`
+# ever fires ("本階段失敗，請從全像重新開始"), so waiting on spawn alone would
+# block forever — see create_bot / _wait_until_spawned. Override with
+# MINEAI_SPAWN_TIMEOUT (seconds).
+SPAWN_TIMEOUT_SECONDS = float(os.environ.get("MINEAI_SPAWN_TIMEOUT", "30"))
 
 # get_logger (not logging.getLogger) so handlers are attached — otherwise these
 # records have nowhere to go and info-level lines are dropped silently.
@@ -82,6 +89,9 @@ class BotRecord:
     end_reason: str | None = None
     kicked_reason: str | None = None
     last_error: str | None = None
+    # Set once the bot has either spawned or disconnected, so create_bot can
+    # stop waiting the moment either happens instead of only on `spawn`.
+    settled: Event = field(default_factory=Event)
 
 
 class BotManager:
@@ -139,9 +149,7 @@ class BotManager:
 
         try:
             if wait_spawn:
-                bot.wait_spawn()
-                with self._lock:
-                    record.spawned = True
+                self._wait_until_spawned(record)
                 if height is not None:
                     bot.set_height(height)
         except Exception as exc:
@@ -152,6 +160,49 @@ class BotManager:
 
         _record("bot_created", bot=clean_name, username=_safe_str(bot.username))
         return self.check_bot_health(clean_name)
+
+    def _wait_until_spawned(self, record: BotRecord) -> None:
+        """Block until the bot spawns, disconnects, or the timeout elapses.
+
+        Replaces a bare ``bot.wait_spawn()``, which only wakes on the ``spawn``
+        event. A bot that joins a level before its task is started is kicked
+        straight back out, so ``spawn`` never fires and the old call blocked the
+        create request forever — freezing the UI's "Create bot" button because
+        the POST never returned. ``record.settled`` is also set by ``mark_ended``,
+        so a disconnect (or the timeout) unblocks us and turns into a clear error
+        the API and UI can report.
+        """
+        record.settled.wait(SPAWN_TIMEOUT_SECONDS)
+        with self._lock:
+            spawned = record.spawned
+            terminal = record.closed or record.kicked_reason is not None
+            reason = record.kicked_reason or record.end_reason or record.last_error
+        # Decide from the record's own state first. Crucially, when the bot was
+        # kicked/disconnected before spawning we must NOT touch the live JS bot:
+        # a stage server admits the bot, kicks it ("請先點擊任務全像開始本階段"),
+        # then tears down the connection, so a synchronous bridge read on the
+        # dead bot can wedge here — leaving the POST (and the UI's "Creating…"
+        # button) stuck until the client's own timeout fires. A kick can settle
+        # the wait a hair before `end` flips `closed`, so treat a recorded kick
+        # as terminal too rather than falling through to the live probe.
+        if spawned:
+            return
+        if terminal:
+            detail = reason or "disconnected before spawning"
+            raise RuntimeError(f"Bot left before it spawned: {detail}")
+        # Not settled as spawned and not closed: `spawn` may have fired in the
+        # gap between bind() and the record being registered, so mark_spawned
+        # no-oped and the flag stayed False even though the bot is in-world.
+        # Only now — with a live connection — is it safe to trust the entity.
+        js_bot = getattr(record.bot, "_js", None)
+        if getattr(js_bot, "entity", None) is not None:
+            with self._lock:
+                record.spawned = True
+            return
+        raise TimeoutError(
+            f"Bot did not spawn within {SPAWN_TIMEOUT_SECONDS:.0f}s "
+            f"({reason or 'still connecting'})"
+        )
 
     def list_bots(self) -> list[dict[str, Any]]:
         """Return health snapshots for every known bot."""
@@ -357,6 +408,7 @@ class BotManager:
         with self._lock:
             if record := self._bots.get(name):
                 record.spawned = True
+                record.settled.set()
         _record("bot_spawned", bot=name)
 
     def mark_ended(self, name: str, reason: object | None = None) -> None:
@@ -364,6 +416,7 @@ class BotManager:
             if record := self._bots.get(name):
                 record.closed = True
                 record.end_reason = _safe_str(reason)
+                record.settled.set()
                 if self._active == name:
                     self._active = self._next_open_bot(exclude=name)
         _record("bot_disconnected", bot=name, reason=_safe_str(reason))
@@ -372,6 +425,12 @@ class BotManager:
         with self._lock:
             if record := self._bots.get(name):
                 record.kicked_reason = _safe_str(reason)
+                # A kick before spawn is a terminal outcome for the create wait.
+                # `end` almost always follows and calls mark_ended, but don't
+                # rely on it: settle here too so _wait_until_spawned unblocks
+                # immediately even if the connection never cleanly ends.
+                if not record.spawned:
+                    record.settled.set()
         # Usually the only clue for an auth misconfiguration, e.g.
         # "unverified_username" when the server is online-mode but auth is not set.
         _record("bot_kicked", bot=name, error=_safe_str(reason))

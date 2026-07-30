@@ -159,6 +159,10 @@ const T = {
   "toast.botCreated.title": { en: "Bot created", zh: "已建立 bot" },
   "toast.botCreated.msg": { en: "{name} is connected.", zh: "{name} 已連線。" },
   "toast.createFail": { en: "Could not create bot", zh: "無法建立 bot" },
+  "toast.createTimeout": {
+    en: "Bot did not spawn in time — it may have been kicked before the stage started. Check the bot card for the reason.",
+    zh: "bot 沒有及時進入世界——可能在關卡開始前就被踢出。請看 bot 卡片上的原因。",
+  },
   "toast.activateFail": { en: "Could not activate", zh: "無法設為使用中" },
   "toast.closeFail": { en: "Could not close", zh: "無法關閉" },
   "toast.removeFail": { en: "Could not remove", zh: "無法移除" },
