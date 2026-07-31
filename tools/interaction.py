@@ -83,6 +83,19 @@ def register(mcp: FastMCP) -> None:
         return "sent"
 
     @mcp.tool
+    async def put_out(
+        value: int | None = None,
+        bot_name: str | None = None,
+    ) -> str:
+        """Run the 'put out' quest action (a fixed-name wrapper over ``action``).
+
+        Equivalent to calling ``action`` with ``name='put out'``. ``value`` is an
+        optional integer payload passed through to the quest.
+        """
+        await call("action", "put out", value, bot_name=bot_name)
+        return "sent"
+
+    @mcp.tool
     async def chat(message: str, bot_name: str | None = None) -> str:
         """Send a chat message to the server."""
         await call("chat", message, bot_name=bot_name)

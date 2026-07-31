@@ -60,64 +60,79 @@ def register(mcp: FastMCP) -> None:
         radius: float = 1.0,
         bot_name: str | None = None,
     ) -> str:
-        """Block until the bot reaches within ``radius`` of ``(x, y, z)``."""
+        """Block until the bot reaches within ``radius`` of ``(x, y, z)``.
+
+        This is the **travel** goto: use it to *get somewhere*, not to line up on
+        a block you will act on. A radius goal is satisfied by any cell within
+        range, so it does not guarantee the bot ends up on or facing ``(x, y,
+        z)`` — for dig/use/place, use ``pathfinder_goto_look_at_block`` instead.
+        """
         return await _run_goto(
             lambda: _goto(_goal_near(bot_name, x, y, z, radius), bot_name),
             bot_name,
         )
 
     @mcp.tool
-    async def pathfinder_goto_block(
+    async def pathfinder_goto_look_at_block(
         x: float,
         y: float,
         z: float,
         bot_name: str | None = None,
     ) -> str:
-        """Block until the bot reaches exactly the target block."""
+        """Block until the bot is in reach of AND facing the target block.
+
+        Prefer this over ``pathfinder_goto_near`` when you intend to act on a
+        specific block (dig/use/place). ``goto_near(radius)`` is satisfied by any
+        cell within ``radius`` — for a 3x3 with the target at the centre a corner
+        cell counts, so the bot stops in the corner, not aimed at the block, and
+        still reports "arrived". This goal instead ends with the bot positioned
+        within reach and already looking at the block face, so the follow-up
+        dig/use/place has a valid aim. Still verify with ``get_block_in_front``.
+        """
         return await _run_goto(
-            lambda: _goto(_goal_block(bot_name, x, y, z), bot_name),
+            lambda: _goto(_goal_look_at_block(bot_name, x, y, z), bot_name),
             bot_name,
         )
 
     @mcp.tool
-    async def pathfinder_goto_get_to_block(
+    async def pathfinder_check_path(
         x: float,
         y: float,
         z: float,
-        bot_name: str | None = None,
-    ) -> str:
-        """Block until the bot reaches beside the target block."""
-        return await _run_goto(
-            lambda: _goto(_goal_get_to_block(bot_name, x, y, z), bot_name),
-            bot_name,
-        )
-
-    @mcp.tool
-    async def pathfinder_goto_xz(
-        x: float,
-        z: float,
-        bot_name: str | None = None,
-    ) -> str:
-        """Block until the bot reaches the target X/Z column; Y is unrestricted."""
-        return await _run_goto(lambda: _goto(_goal_xz(bot_name, x, z), bot_name), bot_name)
-
-    @mcp.tool
-    async def pathfinder_goto_near_xz(
-        x: float,
-        z: float,
+        goal_type: str = "near",
         radius: float = 1.0,
+        timeout_ms: float = 5000.0,
+        include_path: bool = True,
         bot_name: str | None = None,
-    ) -> str:
-        """Block until the bot reaches within ``radius`` on the X/Z plane."""
-        return await _run_goto(
-            lambda: _goto(_goal_near_xz(bot_name, x, z, radius), bot_name),
-            bot_name,
-        )
+    ) -> dict[str, Any]:
+        """Plan (but do NOT walk) a route to a target and report reachability.
 
-    @mcp.tool
-    async def pathfinder_goto_y(y: float, bot_name: str | None = None) -> str:
-        """Block until the bot reaches the target Y height."""
-        return await _run_goto(lambda: _goto(_goal_y(bot_name, y), bot_name), bot_name)
+        Runs the same A* the bot navigates with (``canDig=False``), so a fence
+        or wall between the bot and the target counts as a real obstacle. Use
+        this before a goto to confirm a spot is actually reachable instead of
+        merely close in x/y/z — e.g. a one-block ledge walled off by fences: the
+        coordinates match but no path exists, and a blind goto would stall
+        trying to reach a block it can't.
+
+        ``goal_type`` mirrors the two goto tools: ``near`` (travel — within
+        ``radius`` of the point, pairs with ``pathfinder_goto_near``) or
+        ``look_at_block`` (in reach of and facing the block, pairs with
+        ``pathfinder_goto_look_at_block``). Check the *same* goal you will
+        execute so the answer matches what the goto will do.
+
+        Returns ``reachable`` plus the raw pathfinder ``status``
+        (``success`` = full path found, ``partial``/``timeout``/``noPath`` = it
+        could not fully reach), the path length, cost, and the ``end`` position
+        the planned path stops at — for a ``partial`` result that ``end`` is how
+        far it gets before the obstacle blocks it. ``path`` holds the full list
+        of ``[x, y, z]`` waypoints the bot would walk; set ``include_path=False``
+        to omit it and keep the reply small.
+        """
+        return await to_thread.run_sync(
+            lambda: _check_path(
+                bot_name, x, y, z, goal_type, radius, timeout_ms, include_path
+            ),
+        )
 
     @mcp.tool
     async def pathfinder_set_goal_near(
@@ -218,6 +233,67 @@ def _goto(goal: object, bot_name: str | None) -> str:
     return _fmt(bot.get_pos())
 
 
+def _goal_for(
+    bot_name: str | None,
+    goal_type: str,
+    x: float,
+    y: float,
+    z: float,
+    radius: float,
+) -> object:
+    """Build the goal a check/goto should use for the named ``goal_type``."""
+    if goal_type == "near":
+        return _goal_near(bot_name, x, y, z, radius)
+    if goal_type == "look_at_block":
+        return _goal_look_at_block(bot_name, x, y, z)
+    raise ValueError(
+        f"unknown goal_type {goal_type!r}; use near or look_at_block"
+    )
+
+
+def _check_path(
+    bot_name: str | None,
+    x: float,
+    y: float,
+    z: float,
+    goal_type: str,
+    radius: float,
+    timeout_ms: float,
+    include_path: bool,
+) -> dict[str, Any]:
+    """Plan a route with the bot's no-dig movements and summarise reachability.
+
+    ``getPathTo`` runs A* to completion (or ``timeout_ms``) without moving the
+    bot and returns a Result whose ``status`` is ``success`` only when a full
+    path was found; ``partial`` means it got as close as it could but the goal
+    is blocked off (the fence-separated-block case), ``noPath`` means nothing,
+    ``timeout`` means it ran out of thinking time.
+    """
+    bot = manager.resolve_bot(bot_name)
+    movements = manager.pathfinder_movements(bot_name)
+    goal = _goal_for(bot_name, goal_type, x, y, z, radius)
+    result = bot.pathfinder.getPathTo(movements, goal, timeout_ms)
+    status = str(result.status)
+    nodes = [_node_xyz(result.path[i]) for i in range(int(result.path.length))]
+    cost = getattr(result, "cost", None)
+    summary: dict[str, Any] = {
+        "reachable": status == "success",
+        "status": status,
+        "goal_type": goal_type,
+        "path_length": len(nodes),
+        "cost": round(float(cost), 2) if cost is not None else None,
+        "end": nodes[-1] if nodes else None,
+    }
+    if include_path:
+        summary["path"] = nodes
+    return summary
+
+
+def _node_xyz(node: Any) -> list[float]:
+    """Extract a Move node's block position as rounded ``[x, y, z]``."""
+    return [round(float(node.x), 2), round(float(node.y), 2), round(float(node.z), 2)]
+
+
 def _set_goal(goal: object, dynamic: bool, bot_name: str | None) -> str:
     manager.resolve_bot(bot_name).pathfinder.setGoal(goal, dynamic)
     return "set"
@@ -239,29 +315,17 @@ def _goal_block(bot_name: str | None, x: float, y: float, z: float) -> object:
     return goals.GoalBlock(x, y, z)
 
 
-def _goal_get_to_block(bot_name: str | None, x: float, y: float, z: float) -> object:
+def _goal_look_at_block(bot_name: str | None, x: float, y: float, z: float) -> object:
+    """Goal that ends with the bot in reach of and looking at ``(x, y, z)``.
+
+    ``GoalLookAtBlock(pos, world, options)`` needs the bot's world for its
+    line-of-sight/reach checks. The constructor only reads ``pos.x/.y/.z`` (it
+    copies them into its own Vec3), so a plain dict is enough across the bridge.
+    Options are left at the library defaults (reach 4.5, entityHeight 1.6).
+    """
+    bot = manager.resolve_bot(bot_name)
     goals = manager.pathfinder_module(bot_name).goals
-    return goals.GoalGetToBlock(x, y, z)
-
-
-def _goal_xz(bot_name: str | None, x: float, z: float) -> object:
-    goals = manager.pathfinder_module(bot_name).goals
-    return goals.GoalXZ(x, z)
-
-
-def _goal_near_xz(
-    bot_name: str | None,
-    x: float,
-    z: float,
-    radius: float,
-) -> object:
-    goals = manager.pathfinder_module(bot_name).goals
-    return goals.GoalNearXZ(x, z, radius)
-
-
-def _goal_y(bot_name: str | None, y: float) -> object:
-    goals = manager.pathfinder_module(bot_name).goals
-    return goals.GoalY(y)
+    return goals.GoalLookAtBlock({"x": x, "y": y, "z": z}, bot.world)
 
 
 def _fmt(value: object) -> str:

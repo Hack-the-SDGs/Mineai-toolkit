@@ -143,11 +143,8 @@
 | pathfinder_stop | bot_name(text, 選填) |
 | pathfinder_clear_goal | bot_name(text, 選填) |
 | pathfinder_goto_near | **x, y, z(number, 必填 ×3)**、radius(number, 預設 1.0)、bot_name(text, 選填) |
-| pathfinder_goto_block | **x, y, z(number, 必填 ×3)**、bot_name(text, 選填) |
-| pathfinder_goto_get_to_block | **x, y, z(number, 必填 ×3)**、bot_name(text, 選填) |
-| pathfinder_goto_xz | **x, z(number, 必填 ×2)**、bot_name(text, 選填) |
-| pathfinder_goto_near_xz | **x, z(number, 必填 ×2)**、radius(number, 預設 1.0)、bot_name(text, 選填) |
-| pathfinder_goto_y | **y(number, 必填)**、bot_name(text, 選填) |
+| pathfinder_goto_look_at_block | **x, y, z(number, 必填 ×3)**、bot_name(text, 選填) |
+| pathfinder_check_path | **x, y, z(number, 必填 ×3)**、goal_type(text, 預設 near)、radius(number, 預設 1.0)、timeout_ms(number, 預設 5000)、include_path(boolean, 預設 true)、bot_name(text, 選填) |
 | pathfinder_set_goal_near | **x, y, z(number, 必填 ×3)**、radius(number, 預設 1.0)、dynamic(boolean, 預設 false)、bot_name(text, 選填) |
 | pathfinder_set_goal_block | **x, y, z(number, 必填 ×3)**、dynamic(boolean, 預設 false)、bot_name(text, 選填) |
 

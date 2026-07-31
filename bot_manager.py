@@ -404,6 +404,18 @@ class BotManager:
             record.pathfinder_module = record.bot.require("mineflayer-pathfinder")
         return record.pathfinder_module
 
+    def pathfinder_movements(self, bot_name: str | None = None) -> Any:
+        """Return the cached no-dig Movements profile the bot navigates with.
+
+        ``load_pathfinder`` runs ``_ensure_no_dig`` which builds and caches it,
+        so a plan checked with this profile matches how goto/setGoal will move:
+        ``canDig=False`` means a fence or wall between the bot and the target is
+        a real obstacle, not something the planner assumes it can tunnel through.
+        """
+        self.load_pathfinder(bot_name)
+        record = self._require_record(bot_name or self.get_active_bot() or "")
+        return record.movements
+
     def mark_spawned(self, name: str) -> None:
         with self._lock:
             if record := self._bots.get(name):
