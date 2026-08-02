@@ -25,134 +25,184 @@
         </div>
       </header>
 
-      <!-- ================= DASHBOARD (bots sidebar + activity) ================= -->
-      <section class="panel on" id="panel-dashboard">
-        <div class="layout">
-        <aside class="sidebar">
-        <section class="card">
-          <div class="card-head"><h2 data-i18n="create.title">Create a bot</h2></div>
-          <div class="card-body">
-            <form class="create" id="create-form">
-              <div class="field">
-                <label for="f-name"><span data-i18n="label.name">Name</span> <span class="hint" data-i18n="hint.name">· required, unique</span></label>
-                <input type="text" id="f-name" placeholder="builder" autocomplete="off" />
-              </div>
-              <div class="field">
-                <label for="f-account"><span data-i18n="label.account">Account shorthand</span> <span class="hint" data-i18n="hint.account">· camp machines</span></label>
-                <input type="text" id="f-account" placeholder="g_swim" autocomplete="off" />
-              </div>
+      <!-- ================= layout: left tool/model panel + right bot bar/log ================= -->
+      <div class="layout2">
 
-              <div class="field full">
-                <button type="button" class="adv-toggle" id="adv-toggle">▸ Advanced connection options</button>
-              </div>
+        <!-- LEFT: persistent tool console / model history panel -->
+        <section class="tool-panel" id="tool-panel">
+          <div class="tp-tabs">
+            <button type="button" class="tp-tab on" id="tp-tab-tool" data-i18n="tab.tool">工具 Tool</button>
+            <button type="button" class="tp-tab" id="tp-tab-model" data-i18n="tab.model">模型紀錄</button>
+          </div>
 
-              <div class="adv" id="adv">
-                <div class="field">
-                  <label for="f-host">Host <span class="hint" data-i18n="hint.host">· blank → .env</span></label>
-                  <input type="text" id="f-host" placeholder="from .env" data-i18n-ph="ph.fromEnv" autocomplete="off" />
+          <div class="tp-view on" id="tp-view-tool">
+            <div class="drawer-search">
+              <input type="text" id="tool-search" placeholder="Filter tools… (e.g. move, dig, pathfinder)" data-i18n-ph="ph.toolSearch" autocomplete="off" />
+            </div>
+            <div class="tool-body">
+              <nav class="drawer-cats" id="drawer-cats"></nav>
+              <div class="drawer-panel">
+                <div class="drawer-scroll" id="drawer-scroll">
+                  <div id="tools"></div>
                 </div>
-                <div class="field">
-                  <label for="f-port">Port</label>
-                  <input type="number" id="f-port" placeholder="from .env / SRV" data-i18n-ph="ph.fromEnvSrv" />
-                </div>
-                <div class="field">
-                  <label for="f-username">Username</label>
-                  <input type="text" id="f-username" placeholder="from .env" data-i18n-ph="ph.fromEnv" autocomplete="off" />
-                </div>
-                <div class="field">
-                  <label for="f-password">Password <span class="hint" data-i18n="hint.password">· online-mode servers</span></label>
-                  <input type="password" id="f-password" placeholder="from .env" data-i18n-ph="ph.fromEnv" autocomplete="off" />
-                </div>
-                <div class="field">
-                  <label for="f-version">Version <span class="hint" data-i18n="hint.optional">· optional</span></label>
-                  <input type="text" id="f-version" placeholder="from .env" data-i18n-ph="ph.fromEnv" autocomplete="off" />
-                </div>
-                <div class="field">
-                  <label for="f-height">Height <span class="hint" data-i18n="hint.optional">· optional</span></label>
-                  <input type="number" id="f-height" placeholder="—" />
-                </div>
-                <div class="field">
-                  <div class="row-inline" style="margin-top: 22px;">
-                    <input type="checkbox" id="f-wait" checked />
-                    <label for="f-wait" data-i18n="label.waitSpawn">Wait for spawn before returning</label>
-                  </div>
-                </div>
+                <div class="drawer-dock" id="drawer-dock" hidden></div>
               </div>
+            </div>
+          </div>
 
-              <div class="field full" style="flex-direction: row; justify-content: flex-end;">
-                <button type="submit" class="btn primary" id="create-btn" data-i18n="btn.createBot">Create bot</button>
+          <div class="tp-view" id="tp-view-model">
+            <div class="viz-panel">
+              <div class="viz-toggle">
+                <button type="button" class="seg" data-view="map" data-i18n="seg.map">Map</button>
+                <button type="button" class="seg on" data-view="calls" data-i18n="seg.calls">Calls</button>
               </div>
-            </form>
+              <div class="viz-view" id="view-map">
+                <canvas id="map-canvas"></canvas>
+                <div class="map-north">N</div>
+                <div class="map-legend" id="map-legend"></div>
+                <div class="map-empty" id="map-empty" data-i18n="map.empty">
+                  A top-down map draws here as bots move — path trails, facing,
+                  and dig/place marks.
+                </div>
+              </div>
+              <div class="viz-view on" id="view-calls">
+                <div class="path-wrap">
+                  <div class="loop-banner" id="loop-banner" hidden></div>
+                  <div class="call-path" id="call-path"></div>
+                </div>
+                <div class="calls-legend" id="calls-legend">
+                  <span class="lg"><i style="background:var(--accent)"></i><span data-i18n="legend.move">move</span></span>
+                  <span class="lg"><i style="background:var(--amber)"></i><span data-i18n="legend.interact">interact</span></span>
+                  <span class="lg"><i style="background:var(--green)"></i><span data-i18n="legend.sense">sense</span></span>
+                  <span class="lg"><i style="background:var(--purple)"></i><span data-i18n="legend.path">path</span></span>
+                </div>
+                <div class="calls-empty" id="calls-empty" data-i18n="calls.empty">
+                  The model's calling path draws here in order — repeats collapse
+                  to ×N, and a loop is called out when it repeats.
+                </div>
+              </div>
+            </div>
+            <div class="viz-stats" id="viz-stats"></div>
           </div>
         </section>
 
-        <section class="card">
-          <div class="card-head">
-            <h2>Bots</h2>
-            <div class="row-inline">
-              <button class="btn ghost small" id="clear-closed" style="display: none" data-i18n="btn.removeClosed">Remove closed</button>
-              <button class="btn ghost small" id="refresh-btn" data-i18n="btn.refresh">↻ Refresh</button>
-            </div>
-          </div>
-          <div class="card-body"><div class="bots" id="bots"></div></div>
-        </section>
-        </aside>
+        <!-- RIGHT: bot bar (create + running bots) + log -->
+        <section class="right-col">
 
-        <main class="main">
-        <section class="card">
-          <div class="card-head">
-            <h2><span data-i18n="activity.title">Activity</span> <span class="count" id="ev-count">0</span></h2>
-            <div class="feed-controls">
-              <button class="btn small" id="console-toggle" data-i18n="btn.console">Console</button>
-              <select id="ev-filter">
-                <option value="all" data-i18n="filter.allSources">All sources</option>
-                <option value="model" data-i18n="filter.modelOnly">Model only</option>
-                <option value="human" data-i18n="filter.humanOnly">Human only</option>
-                <option value="system" data-i18n="filter.systemOnly">System only</option>
-              </select>
-              <select id="ev-kind">
-                <option value="all" data-i18n="filter.allKinds">All kinds</option>
-                <option value="tool_call" data-i18n="filter.toolCalls">Tool calls</option>
-                <option value="http" data-i18n="filter.http">HTTP</option>
-                <option value="bot" data-i18n="filter.botEvents">Bot events</option>
-              </select>
-              <button class="btn ghost small" id="ev-clear" data-i18n="btn.clear">Clear</button>
-            </div>
-          </div>
-          <div class="card-body">
-            <div class="viz">
-              <div class="viz-stats" id="viz-stats"></div>
-              <div class="viz-panel">
-                <div class="viz-toggle">
-                  <button type="button" class="seg on" data-view="map" data-i18n="seg.map">Map</button>
-                  <button type="button" class="seg" data-view="calls" data-i18n="seg.calls">Calls</button>
+          <div class="card bot-bar-card">
+            <div class="bot-bar">
+              <div class="bot-bar-controls">
+                <div class="bbc-row">
+                  <h2 data-i18n="create.title">Create a bot</h2>
+                  <button type="button" class="btn ghost small" id="refresh-btn" data-i18n="btn.refresh">↻ Refresh</button>
+                  <button type="button" class="btn ghost small" id="clear-closed" style="display: none" data-i18n="btn.removeClosed">Remove closed</button>
                 </div>
-                <div class="viz-view on" id="view-map">
-                  <canvas id="map-canvas"></canvas>
-                  <div class="map-north">N</div>
-                  <div class="map-legend" id="map-legend"></div>
-                  <div class="map-empty" id="map-empty" data-i18n="map.empty">
-                    A top-down map draws here as bots move — path trails, facing,
-                    and dig/place marks.
-                  </div>
+                <div class="bbc-row">
+                  <span class="bbc-label" data-i18n="label.presetNumber">No.</span>
+                  <input type="text" id="preset-number" class="preset-number" placeholder="1、2、3…" autocomplete="off" />
+                  <!--
+                    TODO(quick-create presets): not wired up yet — see the matching
+                    comment in app.js. havefun is unrelated to the "No." field;
+                    g_ai_fire1_x / g_ai_fire2_x's "x" is meant to be replaced by the
+                    number typed into "No." once this is implemented.
+                  -->
+                  <button type="button" class="btn quick-create" data-preset="havefun"><span data-i18n="btn.quickCreate">+ Create </span>havefun</button>
+                  <button type="button" class="btn adv-toggle-btn" id="create-toggle" title="Advanced" data-i18n-title="hint.advOptionsShort">－</button>
                 </div>
-                <div class="viz-view" id="view-calls">
-                  <div class="path-wrap">
-                    <div class="loop-banner" id="loop-banner" hidden></div>
-                    <div class="call-path" id="call-path"></div>
-                  </div>
-                  <div class="calls-legend" id="calls-legend">
-                    <span class="lg"><i style="background:var(--accent)"></i><span data-i18n="legend.move">move</span></span>
-                    <span class="lg"><i style="background:var(--amber)"></i><span data-i18n="legend.interact">interact</span></span>
-                    <span class="lg"><i style="background:var(--green)"></i><span data-i18n="legend.sense">sense</span></span>
-                    <span class="lg"><i style="background:var(--purple)"></i><span data-i18n="legend.path">path</span></span>
-                  </div>
-                  <div class="calls-empty" id="calls-empty" data-i18n="calls.empty">
-                    The model's calling path draws here in order — repeats collapse
-                    to ×N, and a loop is called out when it repeats.
-                  </div>
+                <div class="bbc-row">
+                  <button type="button" class="btn quick-create" data-preset="g_ai_fire1_x"><span data-i18n="btn.quickCreate">+ Create </span>g_ai_fire1_x</button>
+                  <button type="button" class="btn quick-create" data-preset="g_ai_fire2_x"><span data-i18n="btn.quickCreate">+ Create </span>g_ai_fire2_x</button>
                 </div>
               </div>
+
+              <div class="bots" id="bots"></div>
+            </div>
+
+            <!-- full create form, tucked into a popover so the bot bar stays compact -->
+            <div class="create-popover" id="create-popover" hidden>
+              <div class="cp-head">
+                <h2 data-i18n="create.title">Create a bot</h2>
+                <span class="cp-close" id="create-popover-close">✕</span>
+              </div>
+              <form class="create" id="create-form">
+                <div class="field">
+                  <label for="f-name"><span data-i18n="label.name">Name</span> <span class="hint" data-i18n="hint.name">· required, unique</span></label>
+                  <input type="text" id="f-name" placeholder="builder" autocomplete="off" />
+                </div>
+                <div class="field">
+                  <label for="f-account"><span data-i18n="label.account">Account shorthand</span> <span class="hint" data-i18n="hint.account">· camp machines</span></label>
+                  <input type="text" id="f-account" placeholder="g_swim" autocomplete="off" />
+                </div>
+
+                <div class="field full">
+                  <button type="button" class="adv-toggle" id="adv-toggle">▸ Advanced connection options</button>
+                </div>
+
+                <div class="adv" id="adv">
+                  <div class="field">
+                    <label for="f-host">Host <span class="hint" data-i18n="hint.host">· blank → .env</span></label>
+                    <input type="text" id="f-host" placeholder="from .env" data-i18n-ph="ph.fromEnv" autocomplete="off" />
+                  </div>
+                  <div class="field">
+                    <label for="f-port">Port</label>
+                    <input type="number" id="f-port" placeholder="from .env / SRV" data-i18n-ph="ph.fromEnvSrv" />
+                  </div>
+                  <div class="field">
+                    <label for="f-username">Username</label>
+                    <input type="text" id="f-username" placeholder="from .env" data-i18n-ph="ph.fromEnv" autocomplete="off" />
+                  </div>
+                  <div class="field">
+                    <label for="f-password">Password <span class="hint" data-i18n="hint.password">· online-mode servers</span></label>
+                    <input type="password" id="f-password" placeholder="from .env" data-i18n-ph="ph.fromEnv" autocomplete="off" />
+                  </div>
+                  <div class="field">
+                    <label for="f-version">Version <span class="hint" data-i18n="hint.optional">· optional</span></label>
+                    <input type="text" id="f-version" placeholder="from .env" data-i18n-ph="ph.fromEnv" autocomplete="off" />
+                  </div>
+                  <div class="field">
+                    <label for="f-height">Height <span class="hint" data-i18n="hint.optional">· optional</span></label>
+                    <input type="number" id="f-height" placeholder="—" />
+                  </div>
+                  <div class="field">
+                    <div class="row-inline" style="margin-top: 22px;">
+                      <input type="checkbox" id="f-wait" checked />
+                      <label for="f-wait" data-i18n="label.waitSpawn">Wait for spawn before returning</label>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="field full" style="flex-direction: row; justify-content: flex-end;">
+                  <button type="submit" class="btn primary" id="create-btn" data-i18n="btn.createBot">Create bot</button>
+                </div>
+              </form>
+            </div>
+          </div>
+
+          <div class="card log-card">
+            <div class="card-head">
+              <h2><span data-i18n="activity.title2">Activity Log</span> <span class="count" id="ev-count">0</span></h2>
+              <div class="feed-controls">
+                <select id="ev-filter">
+                  <option value="all" data-i18n="filter.allSources">All sources</option>
+                  <option value="model" data-i18n="filter.modelOnly">Model only</option>
+                  <option value="human" data-i18n="filter.humanOnly">Human only</option>
+                  <option value="system" data-i18n="filter.systemOnly">System only</option>
+                </select>
+                <select id="ev-kind">
+                  <option value="all" data-i18n="filter.allKinds">All kinds</option>
+                  <option value="tool_call" data-i18n="filter.toolCalls">Tool calls</option>
+                  <option value="http" data-i18n="filter.http">HTTP</option>
+                  <option value="bot" data-i18n="filter.botEvents">Bot events</option>
+                </select>
+                <button class="btn ghost small" id="ev-clear" data-i18n="btn.clear">Clear</button>
+              </div>
+            </div>
+            <div class="log-colhead">
+              <span data-i18n="col.source">Source</span>
+              <span data-i18n="col.tool">Function</span>
+              <span data-i18n="col.args">Arguments</span>
+              <span data-i18n="col.result">Result</span>
+              <span data-i18n="col.time">Time / duration</span>
             </div>
             <p class="note" data-i18n="note.activity">
               Every tool the model calls shows up here with its arguments and its
@@ -161,31 +211,7 @@
             <div class="feed" id="feed"></div>
           </div>
         </section>
-        </main>
-
-        <!-- ================= CONSOLE (docked 3rd column on desktop; slide-over overlay on narrow screens) ================= -->
-        <div class="drawer-scrim" id="drawer-scrim" hidden></div>
-        <aside class="drawer" id="console-drawer" aria-hidden="true">
-          <div class="drawer-head">
-            <h2 data-i18n="drawer.title">Manual console</h2>
-            <div class="drawer-bot-chip" id="drawer-bot-chip">
-              <span class="dot" id="drawer-bot-dot"></span>
-              <span id="drawer-bot-name">—</span>
-            </div>
-            <button class="btn ghost small" id="console-close" aria-label="Close console">✕</button>
-          </div>
-          <div class="drawer-search">
-            <input type="text" id="tool-search" placeholder="Filter tools… (e.g. move, dig, pathfinder)" data-i18n-ph="ph.toolSearch" autocomplete="off" />
-          </div>
-          <nav class="drawer-cats" id="drawer-cats"></nav>
-          <div class="drawer-body" id="drawer-scroll">
-            <div id="tools"></div>
-          </div>
-          <div class="drawer-dock" id="drawer-dock" hidden></div>
-        </aside>
-        </div>
-      </section>
-
+      </div>
     </div>
 
     <div class="call-pop" id="call-pop" hidden></div>

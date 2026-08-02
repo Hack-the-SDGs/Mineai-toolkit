@@ -30,6 +30,10 @@ const T = {
   },
   "lang.switchTo": { en: "中", zh: "EN" }, // label shows the language you switch TO
 
+  /* ---- left panel tabs ---- */
+  "tab.tool": { en: "Tools", zh: "工具 Tool" },
+  "tab.model": { en: "Model History", zh: "模型紀錄" },
+
   /* ---- server state ---- */
   "server.connecting": { en: "connecting…", zh: "連線中…" },
   "server.up": { en: "service up", zh: "服務正常" },
@@ -54,6 +58,9 @@ const T = {
   },
   "btn.createBot": { en: "Create bot", zh: "建立 Bot" },
   "btn.creating": { en: "Creating…", zh: "建立中…" },
+  "hint.advOptionsShort": { en: "Advanced", zh: "進階" },
+  "label.presetNumber": { en: "No.", zh: "編號" },
+  "btn.quickCreate": { en: "+ Create ", zh: "＋ 創建 " },
 
   /* ---- bots card ---- */
   "btn.refresh": { en: "↻ Refresh", zh: "↻ 重新整理" },
@@ -83,6 +90,15 @@ const T = {
 
   /* ---- activity card ---- */
   "activity.title": { en: "Activity", zh: "活動記錄" },
+  "activity.title2": { en: "Activity Log", zh: "活動紀錄 Log" },
+  "col.source": { en: "Source", zh: "來源" },
+  "col.tool": { en: "Function", zh: "函式名" },
+  "col.args": { en: "Arguments", zh: "參數" },
+  "col.result": { en: "Result", zh: "結果" },
+  "col.time": { en: "Time / duration", zh: "時間 / 耗時" },
+  "src.model": { en: "MODEL", zh: "模型" },
+  "src.human": { en: "HUMAN", zh: "人類" },
+  "src.system": { en: "SYSTEM", zh: "系統" },
   "btn.console": { en: "Console", zh: "控制台" },
   "filter.allSources": { en: "All sources", zh: "所有來源" },
   "filter.modelOnly": { en: "Model only", zh: "只看 model" },
@@ -153,9 +169,9 @@ const T = {
   "console.noActiveBot": { en: "no active bot", zh: "尚無使用中 bot" },
   "cat.movement": { en: "Movement", zh: "移動" },
   "cat.interaction": { en: "Interaction", zh: "互動" },
-  "cat.lifecycle": { en: "Lifecycle", zh: "生命週期" },
+  "cat.lifecycle": { en: "Lifecycle", zh: "Bot 管理" },
   "cat.sensors": { en: "Sensors", zh: "感測" },
-  "cat.pathfinder": { en: "Pathfinder", zh: "路徑規劃" },
+  "cat.pathfinder": { en: "Pathfinder", zh: "導航" },
   "cat.other": { en: "Other", zh: "其他" },
 
   /* ---- toasts ---- */
@@ -368,6 +384,9 @@ function applyStatic(root = document) {
   });
   root.querySelectorAll("[data-i18n-ph]").forEach((el) => {
     el.placeholder = t(el.getAttribute("data-i18n-ph"));
+  });
+  root.querySelectorAll("[data-i18n-title]").forEach((el) => {
+    el.title = t(el.getAttribute("data-i18n-title"));
   });
 }
 

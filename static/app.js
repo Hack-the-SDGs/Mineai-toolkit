@@ -56,52 +56,37 @@ function toast(title, message, isError = false) {
 
 /* ------------------------------- tabs ------------------------------- */
 
-/* Manual console docks as a 3rd column beside Activity on desktop (collapsing
-   it hands that space back to the feed), and falls back to a slide-over
-   overlay on narrow screens where there's no room for 3 columns side by side. */
-const drawer = $("console-drawer");
-const scrim = $("drawer-scrim");
-const isNarrowScreen = () => window.matchMedia("(max-width: 900px)").matches;
+/* Left panel is always visible (unlike the old slide-over console drawer) and
+   switches between two tabs: the manual tool console and the model-history
+   view (stat strip + live map/calls visualization). */
+function setLeftTab(tabName) {
+  $("tp-tab-tool").classList.toggle("on", tabName === "tool");
+  $("tp-tab-model").classList.toggle("on", tabName === "model");
+  $("tp-view-tool").classList.toggle("on", tabName === "tool");
+  $("tp-view-model").classList.toggle("on", tabName === "model");
+  if (tabName === "model") requestAnimationFrame(renderViz); // canvases size only once shown
+}
+$("tp-tab-tool").addEventListener("click", () => setLeftTab("tool"));
+$("tp-tab-model").addEventListener("click", () => setLeftTab("model"));
 
-const setConsoleOpen = (open, opts = {}) => {
-  drawer.classList.toggle("open", open);
-  drawer.setAttribute("aria-hidden", open ? "false" : "true");
-  scrim.hidden = !(open && isNarrowScreen());
-  if (open && opts.focus) $("tool-search").focus();
-};
-const openConsole = () => setConsoleOpen(true, { focus: true });
-const closeConsole = () => setConsoleOpen(false);
-const toggleConsole = () => setConsoleOpen(!drawer.classList.contains("open"));
-
-$("console-toggle").addEventListener("click", toggleConsole);
-$("console-close").addEventListener("click", closeConsole);
-scrim.addEventListener("click", closeConsole);
-document.addEventListener("keydown", (e) => {
-  if (e.key === "Escape" && drawer.classList.contains("open")) closeConsole();
-});
-
-// Desktop: docked open by default. Narrow screens: starts closed, since
-// opening it there covers the page as a slide-over overlay instead.
-setConsoleOpen(!isNarrowScreen());
-
-/* The docked console's sticky `top` (and thus its `height: calc(100vh - top -
-   20px)`, see style.css) needs to match where .layout actually starts, which
+/* The left panel's sticky `top` (and thus its `height: calc(100vh - top -
+   20px)`, see style.css) needs to match where .layout2 actually starts, which
    moves whenever the header above it changes height — it wraps at some
    widths, and the zh/en taglines are different lengths. A hardcoded px value
    drifts out of sync and the panel overflows past the viewport bottom, so
    this is measured from the live layout instead and kept current via a
    ResizeObserver on the header plus a window resize listener. */
-function syncConsoleDockTop() {
-  const layout = document.querySelector(".layout");
+function syncPanelDockTop() {
+  const layout = document.querySelector(".layout2");
   if (!layout) return;
   const top = layout.getBoundingClientRect().top + window.scrollY;
   document.documentElement.style.setProperty("--dock-top", `${Math.round(top)}px`);
 }
-syncConsoleDockTop();
-window.addEventListener("resize", syncConsoleDockTop);
+syncPanelDockTop();
+window.addEventListener("resize", syncPanelDockTop);
 const headerEl = document.querySelector("header.top");
 if (headerEl && window.ResizeObserver) {
-  new ResizeObserver(syncConsoleDockTop).observe(headerEl);
+  new ResizeObserver(syncPanelDockTop).observe(headerEl);
 }
 
 /* Map | Calls toggle for the big visualization panel. */
@@ -150,29 +135,27 @@ function botCard(b) {
   const pos = b.position ? `${b.position}` : "—";
   return `
     <div class="bot ${b.active ? "is-active" : ""}">
-      <div class="id">
-        <div class="name-row">
-          <span class="name">${esc(b.name)}</span>
-          ${b.active ? `<span class="badge active">${t("badge.active")}</span>` : ""}
-          ${status}
-          <span class="user">${b.username ? "@" + esc(b.username) : b.account ? t("bot.account", { name: esc(b.account) }) : "—"}</span>
+      <div class="name-row">
+        <span class="name">${esc(b.name)}</span>
+        <span class="user">${b.username ? "@" + esc(b.username) : b.account ? t("bot.account", { name: esc(b.account) }) : "—"}</span>
+        ${b.active ? `<span class="badge active">${t("badge.active")}</span>` : ""}
+        ${status}
+        <div class="actions">
+          <button class="btn small activate-btn" data-name="${esc(b.name)}" ${b.active || b.closed ? "disabled" : ""}>${t("btn.setActive")}</button>
+          ${
+            b.closed
+              ? `<button class="btn small danger forget-btn" data-name="${esc(b.name)}">${t("btn.remove")}</button>`
+              : `<button class="btn small danger close-btn" data-name="${esc(b.name)}">${t("btn.close")}</button>`
+          }
         </div>
-        <div class="stats">
-          <div class="stat"><span class="k">${t("stat.position")}</span><span class="v">${esc(pos)}</span></div>
-          <div class="stat"><span class="k">${t("stat.health")}</span><span class="v">${b.health ?? "—"}</span></div>
-          <div class="stat"><span class="k">${t("stat.food")}</span><span class="v">${b.food ?? "—"}</span></div>
-          <div class="stat"><span class="k">${t("stat.pathfinder")}</span><span class="v">${b.pathfinder_loaded ? t("val.yes") : t("val.no")}</span></div>
-        </div>
-        ${why ? `<div class="why">${esc(why)}</div>` : ""}
       </div>
-      <div class="actions">
-        <button class="btn small activate-btn" data-name="${esc(b.name)}" ${b.active || b.closed ? "disabled" : ""}>${t("btn.setActive")}</button>
-        ${
-          b.closed
-            ? `<button class="btn small danger forget-btn" data-name="${esc(b.name)}">${t("btn.remove")}</button>`
-            : `<button class="btn small danger close-btn" data-name="${esc(b.name)}">${t("btn.close")}</button>`
-        }
+      <div class="stats">
+        <div class="stat"><span class="k">${t("stat.position")}</span><span class="v">${esc(pos)}</span></div>
+        <div class="stat"><span class="k">${t("stat.health")}</span><span class="v">${b.health ?? "—"}</span></div>
+        <div class="stat"><span class="k">${t("stat.food")}</span><span class="v">${b.food ?? "—"}</span></div>
+        <div class="stat"><span class="k">${t("stat.pathfinder")}</span><span class="v">${b.pathfinder_loaded ? t("val.yes") : t("val.no")}</span></div>
       </div>
+      ${why ? `<div class="why">${esc(why)}</div>` : ""}
     </div>`;
 }
 
@@ -184,7 +167,6 @@ async function refreshBots() {
     const bots = data.bots || [];
     ingestHealth(bots);
     renderViz();
-    updateDrawerBotChip();
     const host = $("bots");
     $("clear-closed").style.display = "none";
     if (!bots.length) {
@@ -194,7 +176,9 @@ async function refreshBots() {
       </div>`;
       return;
     }
-    host.innerHTML = bots.map(botCard).join("");
+    // Newest first, so a freshly created bot lands at the left edge of the
+    // bar instead of scrolled off the right end of the row.
+    host.innerHTML = bots.slice().reverse().map(botCard).join("");
     host.querySelectorAll(".activate-btn").forEach((btn) =>
       btn.addEventListener("click", async () => {
         try {
@@ -246,6 +230,34 @@ $("adv-toggle").addEventListener("click", () => {
   updateAdvToggle();
 });
 
+/* The full create-bot form lives in a popover anchored under the bot bar's
+   "－" toggle (kept compact so the bot-bar row still has room for the
+   horizontally-scrolling bot cards next to it). */
+const createPopover = $("create-popover");
+function setCreatePopoverOpen(open) {
+  createPopover.hidden = !open;
+  $("create-toggle").classList.toggle("on", open);
+  $("create-toggle").textContent = open ? "✕" : "－";
+  if (open) $("f-name").focus();
+}
+$("create-toggle").addEventListener("click", () => setCreatePopoverOpen(createPopover.hidden));
+$("create-popover-close").addEventListener("click", () => setCreatePopoverOpen(false));
+document.addEventListener("click", (e) => {
+  if (createPopover.hidden) return;
+  if (e.target.closest("#create-popover") || e.target.closest("#create-toggle")) return;
+  setCreatePopoverOpen(false);
+});
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && !createPopover.hidden) setCreatePopoverOpen(false);
+});
+
+/* TODO(quick-create presets): the ".quick-create" buttons and the "編號"
+   (preset-number) field in the bot bar are not wired up yet — they're laid
+   out per the new design but intentionally left inert for now. Planned
+   behavior: "havefun" is unrelated to the "編號" field; for
+   "g_ai_fire1_x" / "g_ai_fire2_x" the "x" is meant to be replaced by the
+   number typed into "編號" once this is implemented. */
+
 $("create-form").addEventListener("submit", async (ev) => {
   ev.preventDefault();
   const name = val("f-name");
@@ -274,6 +286,7 @@ $("create-form").addEventListener("submit", async (ev) => {
     toast(t("toast.botCreated.title"), t("toast.botCreated.msg", { name }));
     $("f-name").value = "";
     $("f-password").value = "";
+    setCreatePopoverOpen(false);
     refreshBots();
   } catch (e) {
     toast(t("toast.createFail"), e.message, true);
@@ -326,7 +339,7 @@ const DIG_TOOLS = new Set(["dig", "place"]);
 
 const toolCat = {}; // name -> category, filled by loadTools()
 let activeBot = null;
-let currentView = "map"; // "map" | "calls" — which big-panel view is shown
+let currentView = "calls"; // "map" | "calls" — which big-panel view is shown
 const botState = {}; // name -> { color, x, y, z, yaw, trail[], marks[], closed, ... }
 let colorIdx = 0;
 const seenIds = new Set(); // rows already animated in
@@ -480,20 +493,33 @@ function renderFeed() {
       if (isNew) fresh.push(ev.id);
       const r = prettyResult(ev);
       const accent = ev.error ? "var(--red)" : catColorFor(ev.name);
+      const hasArgs = ev.arguments && Object.keys(ev.arguments).length;
+      const argsBox = hasArgs ? esc(JSON.stringify(ev.arguments, null, 2)) : "—";
+      const resultBox = esc(r ? r.txt : "—");
       return `
       <div class="ev ${ev.source} ${ev.error ? "err" : ""} ${isNew ? "new" : ""}" data-id="${ev.id}" style="border-left:3px solid ${accent}">
-        <div class="ev-head">
-          <span class="src ${ev.source}">${ev.source}</span>
+        <div class="ev-row">
+          <span class="src ${ev.source}">${t("src." + ev.source)}</span>
           <span class="ev-name">${esc(toolLabel(ev.name))}</span>
-          ${ev.duration_ms != null ? `<span class="ev-ms">${ev.duration_ms} ms</span>` : ""}
-          <span class="ev-time">${fmtTime(ev.timestamp)}</span>
+          <pre class="args-box">${argsBox}</pre>
+          <div class="result-cell">
+            <span class="result-box ${ev.error ? "err" : ""}">${resultBox}</span>
+            <div class="ev-summary">${esc(summaryText(ev))}${r ? ` <span class="r ${r.err ? "err" : ""}">${r.err ? "" : "→ "}${esc(r.txt)}</span>` : ""}</div>
+          </div>
+          <span class="time-col">
+            <span class="ev-time">${fmtTime(ev.timestamp)}</span>
+            <span class="ev-ms">${ev.duration_ms != null ? ev.duration_ms + " ms" : "—"}</span>
+          </span>
         </div>
-        <div class="ev-summary">${esc(summaryText(ev))}${r ? ` <span class="r ${r.err ? "err" : ""}">${r.err ? "" : "→ "}${esc(r.txt)}</span>` : ""}</div>
         <div class="ev-detail">
-          <div class="lbl">${t("lbl.arguments")}</div>
-          <pre>${esc(JSON.stringify(ev.arguments ?? null, null, 2))}</pre>
-          <div class="lbl">${ev.error ? t("lbl.error") : t("lbl.result")}</div>
-          <pre>${esc(ev.error || JSON.stringify(ev.result ?? null, null, 2))}</pre>
+          <div class="ev-detail-col">
+            <div class="lbl">${t("lbl.arguments")}</div>
+            <pre>${esc(JSON.stringify(ev.arguments ?? null, null, 2))}</pre>
+          </div>
+          <div class="ev-detail-col">
+            <div class="lbl">${ev.error ? t("lbl.error") : t("lbl.result")}</div>
+            <pre>${esc(ev.error || JSON.stringify(ev.result ?? null, null, 2))}</pre>
+          </div>
         </div>
       </div>`;
     })
@@ -874,14 +900,6 @@ const catLabel = (cat) => t("cat." + cat);
 // as field labels.
 const toolDesc = (tool) => window.i18n.toolDesc(tool.name, tool.description.split("\n")[0]).replace(/``/g, "");
 
-function updateDrawerBotChip() {
-  const dot = $("drawer-bot-dot");
-  const label = $("drawer-bot-name");
-  if (!dot || !label) return;
-  dot.className = "dot" + (activeBot ? " up" : "");
-  label.textContent = activeBot || t("console.noActiveBot");
-}
-
 /** One small grid card in the tool list; click selects/deselects it. */
 function toolCard(tool) {
   const desc = toolDesc(tool);
@@ -913,7 +931,7 @@ function renderTools() {
     : `<div class="empty"><div class="big">${t("tools.empty")}</div></div>`;
 
   $("drawer-cats").innerHTML = cats
-    .map((cat) => `<button type="button" class="cat" data-cat="${esc(cat)}">${esc(catLabel(cat))}(${groups[cat].length})</button>`)
+    .map((cat) => `<button type="button" class="cat" data-cat="${esc(cat)}">${esc(catLabel(cat))}</button>`)
     .join("");
 
   $("tools")
@@ -971,8 +989,8 @@ function dockField(key, spec, required, coord) {
 }
 
 /** Select (or deselect, on repeat click) a tool and (re)draw the bottom dock.
- *  bot_name is left out of the dock — the header's active-bot chip covers it,
- *  and every tool already falls back to the active bot when it's omitted. */
+ *  bot_name is left out of the dock — the bot bar's active-bot badge covers
+ *  it, and every tool already falls back to the active bot when it's omitted. */
 function selectTool(name) {
   selectedTool = selectedTool === name ? null : name;
   renderTools();
@@ -982,6 +1000,9 @@ function selectTool(name) {
 function renderDock() {
   const dock = $("drawer-dock");
   const tool = selectedTool ? findTool(selectedTool) : null;
+  // The dock overlays the bottom of the scrollable tool list (see .drawer-dock
+  // in style.css) — pad the list so its last card isn't hidden behind it.
+  $("drawer-scroll").classList.toggle("has-dock", !!tool);
   if (!tool) {
     dock.hidden = true;
     dock.innerHTML = "";
@@ -1079,8 +1100,7 @@ window.i18n.onLangChange(() => {
   renderViz();
   renderTools();
   renderDock();
-  updateDrawerBotChip();
-  syncConsoleDockTop();
+  syncPanelDockTop();
 });
 
 refreshBots();
