@@ -2,6 +2,7 @@
 
 const API = "";
 const t = (key, params) => window.i18n.t(key, params);
+const toolLabel = (name) => window.i18n.toolLabel(name);
 const $ = (id) => document.getElementById(id);
 const esc = (s) =>
   String(s).replace(/[&<>"']/g, (c) =>
@@ -452,8 +453,7 @@ function summaryText(ev) {
         const to = [a.x, a.y, a.z].filter((v) => v != null).join(", ");
         return t("sum.pathfindTo", { to });
       }
-      if (ev.name.startsWith("pathfinder_")) return ev.name.replace(/_/g, " ");
-      return ev.name.replace(/_/g, " ");
+      return toolLabel(ev.name).replace(/_/g, " ");
   }
 }
 
@@ -484,7 +484,7 @@ function renderFeed() {
       <div class="ev ${ev.source} ${ev.error ? "err" : ""} ${isNew ? "new" : ""}" data-id="${ev.id}" style="border-left:3px solid ${accent}">
         <div class="ev-head">
           <span class="src ${ev.source}">${ev.source}</span>
-          <span class="ev-name">${esc(ev.name)}</span>
+          <span class="ev-name">${esc(toolLabel(ev.name))}</span>
           ${ev.duration_ms != null ? `<span class="ev-ms">${ev.duration_ms} ms</span>` : ""}
           <span class="ev-time">${fmtTime(ev.timestamp)}</span>
         </div>
@@ -529,7 +529,7 @@ function renderStats() {
       <div class="st-k">${t("st.topTools")}</div>
       <div class="toplist">${
         top.length
-          ? top.map(([n, c]) => `<div class="tl"><span class="tl-n">${esc(n)}</span><span class="tl-bar"><i style="width:${round((c / maxc) * 100)}%"></i></span><span class="tl-c">${c}</span></div>`).join("")
+          ? top.map(([n, c]) => `<div class="tl"><span class="tl-n">${esc(toolLabel(n))}</span><span class="tl-bar"><i style="width:${round((c / maxc) * 100)}%"></i></span><span class="tl-c">${c}</span></div>`).join("")
           : '<span class="muted">—</span>'
       }</div>
     </div>`;
@@ -734,7 +734,7 @@ function registerChip(name, evs) {
 
 function chip(name, count, cur, ci) {
   const badge = count > 1 ? `<span class="count">×${count}</span>` : "";
-  return `<span class="chip${cur ? " cur" : ""}" data-ci="${ci}"><i class="dot" style="background:${catColorFor(name)}"></i>${esc(name)}${badge}</span>`;
+  return `<span class="chip${cur ? " cur" : ""}" data-ci="${ci}"><i class="dot" style="background:${catColorFor(name)}"></i>${esc(toolLabel(name))}${badge}</span>`;
 }
 
 function showCallPop(chipEl) {
@@ -742,7 +742,7 @@ function showCallPop(chipEl) {
   const pop = $("call-pop");
   if (!d || !pop) return;
   const last = d.evs[d.evs.length - 1];
-  let html = `<div class="cp-head"><span class="cp-name">${esc(d.name)}</span>${d.evs.length > 1 ? `<span class="cp-n">${t("cp.nCalls", { n: d.evs.length })}</span>` : ""}</div>`;
+  let html = `<div class="cp-head"><span class="cp-name">${esc(toolLabel(d.name))}</span>${d.evs.length > 1 ? `<span class="cp-n">${t("cp.nCalls", { n: d.evs.length })}</span>` : ""}</div>`;
   if (last) {
     html += `<div class="cp-time">${fmtTime(last.timestamp)}${last.duration_ms != null ? ` · ${last.duration_ms} ms` : ""}${d.evs.length > 1 ? " · " + t("cp.latest") : ""}</div>`;
     const a = last.arguments && Object.keys(last.arguments).length ? JSON.stringify(last.arguments) : "—";
@@ -771,7 +771,7 @@ function renderLoopBanner(tail) {
   b.textContent =
     tail.kind === "loop"
       ? t("loop.looping", { block: tail.block.join(" → "), reps: tail.reps })
-      : t("loop.repeating", { name: tail.name, count: tail.count });
+      : t("loop.repeating", { name: toolLabel(tail.name), count: tail.count });
   b.hidden = false;
 }
 
@@ -887,7 +887,7 @@ function toolCard(tool) {
   const desc = toolDesc(tool);
   return `
     <div class="tool-card${selectedTool === tool.name ? " selected" : ""}" data-name="${esc(tool.name)}">
-      <div class="tc-name">${esc(tool.name)}</div>
+      <div class="tc-name">${esc(toolLabel(tool.name))}</div>
       <div class="tc-desc">${esc(desc)}</div>
     </div>`;
 }
@@ -999,7 +999,7 @@ function renderDock() {
   dock.hidden = false;
   dock.innerHTML = `
     <div class="dock-head">
-      <span class="dk-name">${esc(tool.name)}</span>
+      <span class="dk-name">${esc(toolLabel(tool.name))}</span>
       <span class="dk-desc">${esc(desc)}</span>
       <span class="dk-close" id="dock-close">✕</span>
     </div>

@@ -1,11 +1,16 @@
 /* Lightweight i18n for the control UI.
  *
- * Policy: instructional / UI prose is Traditional Chinese; technical nouns and
- * identifiers stay English — tool names, category names, connection nouns
- * (Host / Port / Username / Password / Version / Height), the source tags
- * (model / human / system), pathfinder, HTTP, yaw, .env, etc. Those English
- * tokens are baked into the zh strings on purpose, so the two languages share
- * the same jargon.
+ * Policy: instructional / UI prose is Traditional Chinese; technical nouns
+ * stay English — category names, connection nouns (Host / Port / Username /
+ * Password / Version / Height), the source tags (model / human / system),
+ * pathfinder, HTTP, yaw, .env, etc. Those English tokens are baked into the
+ * zh strings on purpose, so the two languages share the same jargon.
+ *
+ * Tool *names* are the one exception: in zh mode every place a tool name is
+ * shown as a label (console cards/dock, activity feed, call path, top-tools
+ * stat) is fully replaced by its Chinese label via TOOL_NAME / toolLabel().
+ * The raw English name is kept wherever it's used as an identifier rather
+ * than a label (data-name attributes, category/color lookups, filter args).
  *
  * Strings live in T[key] = { en, zh }. `t(key, params)` picks the current
  * language and substitutes {name} tokens from params. Static markup is tagged
@@ -270,6 +275,65 @@ const TOOL_DESC = {
   set_active_bot: "選擇 action tool 預設要使用哪個現有的 bot。",
 };
 
+/* Traditional-Chinese label for each tool *name*, shown in zh mode anywhere
+ * a tool name is rendered as a label (console cards/dock, activity feed,
+ * call path, top-tools stat). Unlike TOOL_DESC this fully replaces the
+ * English name in the UI — the backend/model still only ever see the
+ * English name, this is display-only. A tool with no entry here falls back
+ * to its raw English name. */
+const TOOL_NAME = {
+  // movement
+  move_forward: "向前走",
+  move_backward: "向後走",
+  move_left: "向左移動",
+  move_right: "向右移動",
+  jump: "跳躍",
+  turn: "轉向",
+  turn_left: "向左轉",
+  turn_right: "向右轉",
+  set_turn: "設定朝向",
+  look_at: "看向座標",
+  // pathfinder
+  load_pathfinder: "載入導航",
+  pathfinder_status: "導航狀態",
+  pathfinder_stop: "停止導航",
+  pathfinder_clear_goal: "清除導航目標",
+  pathfinder_goto_near: "前往座標附近",
+  pathfinder_goto_look_at_block: "前往並面向方塊",
+  pathfinder_check_path: "檢查路徑",
+  pathfinder_set_goal_near: "設定背景目標（座標）",
+  pathfinder_set_goal_block: "設定背景目標（方塊）",
+  // interaction
+  hold: "手持物品",
+  dig: "挖掘",
+  place: "放置方塊",
+  unhold: "收起物品",
+  drop: "丟棄物品",
+  use: "使用物品",
+  use_player: "對玩家使用",
+  sneak: "潛行",
+  action: "執行動作",
+  put_out: "撲滅",
+  chat: "發送訊息",
+  set_height: "設定體型",
+  // sensors
+  get_pos: "取得座標",
+  get_block: "取得方塊",
+  look_block: "取得瞄準方塊",
+  find_block: "搜尋方塊",
+  find_blocks: "搜尋多個方塊",
+  get_block_in_front: "取得前方方塊",
+  get_block_property: "取得方塊屬性",
+  get_hand: "取得手持物品",
+  get_height: "取得體型",
+  get_orientation: "取得朝向",
+  // lifecycle
+  list_bots: "列出 bot",
+  check_bot_health: "查詢 bot 生命值",
+  get_active_bot: "取得使用中 bot",
+  set_active_bot: "設定使用中 bot",
+};
+
 const LANG_KEY = "mineai_lang";
 const SUPPORTED = ["zh", "en"];
 
@@ -338,6 +402,14 @@ function toolDesc(name, fallbackEn) {
   return fallbackEn;
 }
 
+/** Display label for a tool name: zh label when available and in zh mode,
+ *  else the raw (English) tool name — never touches the identifier itself,
+ *  only what's rendered on screen. */
+function toolLabel(name) {
+  if (lang === "zh" && TOOL_NAME[name]) return TOOL_NAME[name];
+  return name;
+}
+
 window.i18n = {
   t,
   applyStatic,
@@ -345,6 +417,7 @@ window.i18n = {
   toggleLang,
   onLangChange,
   toolDesc,
+  toolLabel,
   get lang() {
     return lang;
   },
