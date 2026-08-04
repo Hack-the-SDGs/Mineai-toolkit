@@ -142,6 +142,12 @@ input[type="checkbox"] { width: auto; accent-color: var(--accent); }
 .bot .actions .icon { padding: 4px 8px; line-height: 1; }
 .bots .empty { flex: 1; }
 
+/* Marks the boundary between bots that existed before a create action and
+   the bot just created (see syncBotDividers()/botsWithDividers() in app.js).
+   align-self: stretch (overriding .bots' align-items: flex-end) makes it
+   span the full row height regardless of neighboring card heights. */
+.bot-divider { flex: 0 0 auto; align-self: stretch; width: 0; border-left: 1px dashed var(--border); }
+
 .why { font-size: 12.5px; color: var(--amber); }
 
 /* name/position/Health/Food/Pathfinder popover for a bot card, positioned in

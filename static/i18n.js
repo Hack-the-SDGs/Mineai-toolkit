@@ -67,6 +67,7 @@ const T = {
   "btn.refresh": { en: "↻ Refresh", zh: "↻ 重新整理" },
   "btn.removeClosed": { en: "Remove closed", zh: "移除已關閉" },
   "btn.removeNClosed": { en: "Remove {n} closed", zh: "移除 {n} 個已關閉" },
+  "btn.clearDividers": { en: "Clear dividers", zh: "清除分隔線" },
   "bots.empty.title": { en: "No bots yet", zh: "還沒有 bot" },
   "bots.empty.desc": {
     en: "Create one above. On camp machines use the account shorthand; for dev testing leave it blank and the values come from <code>.env</code>.",

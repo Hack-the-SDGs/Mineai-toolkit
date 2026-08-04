@@ -121,6 +121,106 @@ window.addEventListener("resize", () => requestAnimationFrame(renderViz));
 
 const val = (id) => $(id).value.trim();
 
+/* Bot-bar dividers: a persistent, client-side dashed line marking "bots that
+   existed before this creation" vs "the bot just created", accumulated
+   across every successful create (form or quick-create). Purely a UI aid —
+   nothing here is known to the server.
+   Each bot name gets a monotonically increasing seq the first time it's
+   seen, assigned in the raw /health array's order (oldest first — see the
+   "newest first" comment in refreshBots()). A divider stores the seq of the
+   bot it was created next to, not the bot's name or a DOM position, so on
+   render it's placed by comparing seqs against whatever bots currently
+   survive — it stays pinned in the same relative gap even after that bot is
+   forgotten. Survives page reloads (localStorage); only the explicit
+   "clear dividers" button empties it. */
+const DIVIDER_SEQ_KEY = "mineai.botDivider.seq";
+const DIVIDER_COUNTER_KEY = "mineai.botDivider.counter";
+const DIVIDER_LIST_KEY = "mineai.botDivider.dividers";
+const DIVIDER_PENDING_KEY = "mineai.botDivider.pending";
+
+function loadJSON(key, fallback) {
+  try {
+    const raw = localStorage.getItem(key);
+    return raw ? JSON.parse(raw) : fallback;
+  } catch {
+    return fallback;
+  }
+}
+function saveJSON(key, value) {
+  localStorage.setItem(key, JSON.stringify(value));
+}
+
+// A bot just got created (name known immediately; its position in the next
+// /health response isn't) — remember it so the next sync can turn it into an
+// actual divider once its seq is assigned.
+function markDividerPending(name) {
+  const pending = loadJSON(DIVIDER_PENDING_KEY, []);
+  if (!pending.includes(name)) pending.push(name);
+  saveJSON(DIVIDER_PENDING_KEY, pending);
+}
+
+function clearBotDividers() {
+  saveJSON(DIVIDER_LIST_KEY, []);
+}
+
+// Assigns seqs to any not-yet-seen bot names (oldest-first order) and
+// resolves pending "just created" markers into divider seqs now that those
+// bots' seqs are knowable. Returns the up-to-date name -> seq map.
+function syncBotDividers(botsOldestFirst) {
+  const seqMap = loadJSON(DIVIDER_SEQ_KEY, {});
+  let counter = loadJSON(DIVIDER_COUNTER_KEY, 1);
+  let seqChanged = false;
+  botsOldestFirst.forEach((b) => {
+    if (!(b.name in seqMap)) {
+      seqMap[b.name] = counter++;
+      seqChanged = true;
+    }
+  });
+  if (seqChanged) {
+    saveJSON(DIVIDER_SEQ_KEY, seqMap);
+    saveJSON(DIVIDER_COUNTER_KEY, counter);
+  }
+
+  const pending = loadJSON(DIVIDER_PENDING_KEY, []);
+  if (pending.length) {
+    const stillPending = pending.filter((name) => !(name in seqMap));
+    if (stillPending.length !== pending.length) {
+      const dividers = loadJSON(DIVIDER_LIST_KEY, []);
+      pending.forEach((name) => {
+        if (name in seqMap) dividers.push(seqMap[name]);
+      });
+      saveJSON(DIVIDER_LIST_KEY, dividers);
+      saveJSON(DIVIDER_PENDING_KEY, stillPending);
+    }
+  }
+
+  return seqMap;
+}
+
+const BOT_DIVIDER_HTML = '<div class="bot-divider"></div>';
+
+// Interleaves divider markers into an already newest-first list of bots.
+function botsWithDividers(botsNewestFirst, seqMap) {
+  const dividers = loadJSON(DIVIDER_LIST_KEY, [])
+    .slice()
+    .sort((a, b) => b - a);
+  let i = 0;
+  const parts = [];
+  botsNewestFirst.forEach((b) => {
+    const seq = seqMap[b.name] ?? -Infinity;
+    while (i < dividers.length && dividers[i] > seq) {
+      parts.push(BOT_DIVIDER_HTML);
+      i++;
+    }
+    parts.push(botCard(b));
+  });
+  while (i < dividers.length) {
+    parts.push(BOT_DIVIDER_HTML);
+    i++;
+  }
+  return parts.join("");
+}
+
 function botCard(b) {
   const statusClass = b.closed ? "offline" : b.connected && b.spawned ? "online" : "pending";
   const statusText = b.closed ? t("badge.closed") : b.connected && b.spawned ? t("badge.online") : t("badge.connecting");
@@ -302,12 +402,14 @@ async function refreshBots() {
         <div class="big">${t("bots.empty.title")}</div>
         <div>${t("bots.empty.desc")}</div>
       </div>`;
+      $("clear-dividers").style.display = "none";
       if (pinnedBotEl) unpinBotStatsPop();
       return;
     }
     // Newest first, so a freshly created bot lands at the left edge of the
     // bar instead of scrolled off the right end of the row.
-    host.innerHTML = bots.slice().reverse().map(botCard).join("");
+    const seqMap = syncBotDividers(bots);
+    host.innerHTML = botsWithDividers(bots.slice().reverse(), seqMap);
     // This rebuilds every .bot node, so a pinned popover (see
     // renderBotStatsPop()) would otherwise go stale on the next 15s poll —
     // re-point it at the fresh node with the same name, or unpin if the bot
@@ -357,6 +459,8 @@ async function refreshBots() {
     const closed = bots.filter((b) => b.closed).length;
     $("clear-closed").style.display = closed ? "" : "none";
     $("clear-closed").textContent = t("btn.removeNClosed", { n: closed });
+
+    $("clear-dividers").style.display = loadJSON(DIVIDER_LIST_KEY, []).length ? "" : "none";
   } catch (e) {
     $("server-dot").className = "dot down";
     $("server-label").textContent = t("server.down");
@@ -441,6 +545,7 @@ async function quickCreateBot(preset) {
       timeoutMs: 45000,
     });
     toast(t("toast.botCreated.title"), t("toast.botCreated.msg", { name: account }));
+    markDividerPending(account);
     refreshBots();
   } catch (e) {
     toast(t("toast.createFail"), e.message, true);
@@ -484,6 +589,7 @@ $("create-form").addEventListener("submit", async (ev) => {
     $("f-name").value = "";
     $("f-password").value = "";
     setCreatePopoverOpen(false);
+    markDividerPending(name);
     refreshBots();
   } catch (e) {
     toast(t("toast.createFail"), e.message, true);
@@ -503,6 +609,11 @@ $("clear-closed").addEventListener("click", async () => {
   } catch (e) {
     toast(t("toast.removeFail"), e.message, true);
   }
+});
+
+$("clear-dividers").addEventListener("click", () => {
+  clearBotDividers();
+  refreshBots();
 });
 
 /* ----------------------------- activity ----------------------------- */
