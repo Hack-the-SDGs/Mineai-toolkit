@@ -30,6 +30,16 @@ CreateOptions = dict[str, Any]
 # MINEAI_SPAWN_TIMEOUT (seconds).
 SPAWN_TIMEOUT_SECONDS = float(os.environ.get("MINEAI_SPAWN_TIMEOUT", "30"))
 
+# Whether the navigation profile keeps mineflayer-pathfinder's diagonal moves.
+# Off by default: getMoveDiagonal accepts a corner cut when *either* of the two
+# corner cells is passable, then drives straight through the corner — which
+# clips the 1.5-tall collision of a fence sitting on the *other* corner, so the
+# planner reports success but the bot wedges on the fence. In this fence-heavy,
+# 1-wide-corridor world diagonals are rarely usable and are the main cause of
+# stuck gotos, so we plan cardinal-only. Set MINEAI_PATHFINDER_DIAGONALS=1 to
+# restore them on an open-terrain server.
+ALLOW_DIAGONALS = (os.environ.get("MINEAI_PATHFINDER_DIAGONALS", "0").strip() == "1")
+
 # get_logger (not logging.getLogger) so handlers are attached — otherwise these
 # records have nowhere to go and info-level lines are dropped silently.
 logger = get_logger("bots")
@@ -374,6 +384,8 @@ class BotManager:
         # construction in tools/pathfinder.py.
         movements = module.Movements(js_bot)
         movements.canDig = False
+        if not ALLOW_DIAGONALS:
+            _disable_diagonals(movements)
         record.bot.pathfinder.setMovements(movements)
         record.movements = movements
 
@@ -590,6 +602,23 @@ def _has_pathfinder(bot: Bot) -> bool:
     except Exception:
         return False
     return True
+
+
+def _disable_diagonals(movements: Any) -> None:
+    """Stop the planner emitting diagonal moves on this Movements profile.
+
+    mineflayer-pathfinder has no ``allowDiagonal`` flag — ``getNeighbors`` always
+    calls ``getMoveDiagonal``. We replace that method with a JS no-op, so
+    ``getNeighbors`` still calls it but it adds no neighbors and planning stays
+    cardinal. The no-op is built in JS (``globalThis.Function``) rather than as a
+    Python callback: this runs in the hot A* loop, and a per-call bridge hop into
+    Python would make pathfinding unusably slow.
+    """
+    from javascript import globalThis  # same JSPyBridge Node process as minethon
+
+    movements.getMoveDiagonal = globalThis.Function(
+        "node", "dir", "neighbors", "return undefined"
+    )
 
 
 def _fmt(value: object) -> str:

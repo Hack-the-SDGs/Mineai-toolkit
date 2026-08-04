@@ -1,252 +1,544 @@
-"""Pathfinder tools for larger navigation tasks.
+"""Grid navigator — our own pathfinder, driven through minethon.
 
-Navigation uses ``mineflayer-pathfinder``: ``getPathTo`` plans the route (no
-movement), and every plan — success or failure — is logged with its full path
-array, status and search stats, so a failed goto can be diagnosed from the log
-instead of guessed at.
+Built for the fence-lattice quest worlds (e.g. ``world-g0``) where
+mineflayer-pathfinder fails — it cuts diagonals straight through fence corners
+(upstream #310) and its planning around fences is unreliable. This navigator is a
+simple, deterministic cardinal-only A* over the bot's *own* block reads, so we
+fully control walkability, facing and centering.
+
+    a cell (x, y, z) is STANDABLE when
+        feet   (x, y,   z)  is air
+        head   (x, y+1, z)  is air
+        floor  (x, y-1, z)  is a solid block — NOT air, and NOT a fence/wall
+
+**Fences are pure obstacles**, routed *around*: never walked into (feet), never
+walked under (head), and never stood on (floor). A fence is 1.5 blocks tall, so
+its collision reaches into the cell above — a bot cannot walk horizontally onto a
+fence top, it would have to jump. Counting a fence as floor made A* plan routes
+over fence tops that the walk then stalled against; excluding it fixes that. The
+floor check also keeps us on one level (we never step into a hole or off an edge),
+which matches the "same level only, just make it work" scope.
+
+Two tools, deliberately split:
+
+* ``find_path(x, y, z)`` — plan a valid cell route from where the bot stands to
+  the target, using A* over the 4-connected grid. **No movement.** Returns the
+  route (or why there isn't one). Any valid route, not a fancy one.
+* ``goto(x, y, z)`` — plan the same route, then **walk** it: face each next cell
+  and step forward one cell, verifying the landing before the next step. Always
+  moves forward (never strafes/reverses); facing the next cell absolutely means
+  we never have to decide "turn left vs right".
+
+Multi-level (jump up / drop down) is intentionally out of scope for now, but the
+neighbour generator is written so enabling it later is flipping ``_MAX_STEP_UP`` /
+``_MAX_DROP`` rather than rewriting the search.
 """
 
 from __future__ import annotations
 
+import heapq
 import math
 import os
-import time
-from collections.abc import Iterable
+from collections.abc import Iterable, Iterator
 from typing import TYPE_CHECKING, Any
-
-from anyio import to_thread
 
 from bot_manager import manager
 from bot_session import run_with_timeout
 from logging_setup import get_logger
+from tools.facing import facing_ok, yaw_for_direction
 
 if TYPE_CHECKING:
     from fastmcp import FastMCP
 
-# How long a goto waits before giving up and stopping the bot. Longer than the
-# general command timeout because a real navigation across terrain legitimately
-# takes a while; override with MINEAI_PATHFINDER_TIMEOUT (seconds).
-PATHFINDER_TIMEOUT = float(os.environ.get("MINEAI_PATHFINDER_TIMEOUT", "300"))
+# A* node budget. Each node costs up to three get_block reads over the bridge, so
+# an unreachable target can't explode into thousands of reads — we give up and
+# report "no path" instead. Override with MINEAI_GRID_MAX_NODES.
+GRID_MAX_NODES = int(os.environ.get("MINEAI_GRID_MAX_NODES", "4096"))
 
-# How often the goto loop polls the pathfinder for arrival, in seconds.
-_POLL_INTERVAL = 0.25
+# Backstop timeout for a whole find_path / goto call (seconds). A walk is bounded
+# by the route length and each step verifies, so this only guards a wedged bridge
+# read. Override with MINEAI_GRID_TIMEOUT.
+GRID_TIMEOUT = float(os.environ.get("MINEAI_GRID_TIMEOUT", "120"))
 
-# If the bot's block cell hasn't changed for this long while a goal is still
-# set, the pathfinder has stopped short — it only nulls its goal on exact
-# arrival, so a goal it can't fully satisfy (a fence between, a blocked final
-# step) otherwise leaves us polling until the full timeout. Long enough not to
-# trip during the first path computation after setGoal, or while walking (a
-# block is crossed well under a second). Override with
-# MINEAI_PATHFINDER_STALL_SECONDS.
-_STALL_SECONDS = float(os.environ.get("MINEAI_PATHFINDER_STALL_SECONDS", "2.0"))
+# How close to a cell's middle (cx+0.5, cz+0.5) still counts as centered. On a
+# physics server move_forward stops wherever progress crossed the block count, so
+# the bot can finish off-center — bad in a fence corridor, where off-center clips
+# the side fences and skews the next turn. Beyond this offset we nudge to the
+# middle. Override with MINEAI_GRID_CENTER_TOL.
+_CENTER_TOL = float(os.environ.get("MINEAI_GRID_CENTER_TOL", "0.2"))
 
-# run_with_timeout's own ceiling sits a little above PATHFINDER_TIMEOUT so the
-# in-thread deadline in _goto (which can stop the bot on the same thread) is the
-# normal path; the outer timeout is only a backstop for a wedged bridge read.
-_BACKSTOP_MARGIN_SECONDS = 15.0
+# Vertical reach, in cells. Both 0 → same-level only (current scope). Raising
+# _MAX_STEP_UP enables jump-up neighbours; raising _MAX_DROP enables walk-off
+# drops. The search and walker already branch on these, so levels are a config
+# change, not a rewrite.
+_MAX_STEP_UP = 0
+_MAX_DROP = 0
 
-# How long getPathTo may think when planning (ms), before it returns whatever it
-# has (status 'timeout'). Override with MINEAI_PATHFINDER_PLAN_MS.
-_PLAN_TIMEOUT_MS = float(os.environ.get("MINEAI_PATHFINDER_PLAN_MS", "5000"))
+# 4-connected cardinal neighbours (dx, dz). No diagonals — that removes the whole
+# fence-corner-cut failure mode by construction.
+_STEPS_XZ: tuple[tuple[int, int], ...] = ((1, 0), (-1, 0), (0, 1), (0, -1))
 
-# get_block names that mean an empty cell the bot can stand *in*; anything else
-# is an occupied block to approach from beside rather than stand inside.
+# get_block names that mean an empty cell (air the bot can stand in / a non-floor).
 _EMPTY_BLOCKS = {"", "air", "cave_air", "void_air"}
 
-# Logs the planned route to stderr (and the file when MINEAI_LOG_FILE is set),
-# so the path is visible outside the browser timeline. get_logger — not
-# logging.getLogger — so the handlers are actually attached.
 _log = get_logger("pathfinder")
 
 
 def register(mcp: FastMCP) -> None:
-    """Register pathfinder tools on ``mcp``."""
+    """Register the grid navigator tools on ``mcp``."""
 
     @mcp.tool
-    async def load_pathfinder(bot_name: str | None = None) -> str:
-        """Ensure mineflayer-pathfinder is loaded on the selected bot."""
-        return await to_thread.run_sync(lambda: manager.load_pathfinder(bot_name))
-
-    @mcp.tool
-    async def pathfinder_status(bot_name: str | None = None) -> dict[str, Any]:
-        """Return pathfinder movement/mining/building status."""
-        return await to_thread.run_sync(lambda: _status(bot_name))
-
-    @mcp.tool
-    async def pathfinder_stop(bot_name: str | None = None) -> str:
-        """Cancel the current pathfinder task and stop moving."""
-        return await to_thread.run_sync(lambda: _stop(bot_name))
-
-    @mcp.tool
-    async def pathfinder_clear_goal(bot_name: str | None = None) -> str:
-        """Clear the current pathfinder goal."""
-        return await to_thread.run_sync(lambda: _clear_goal(bot_name))
-
-    @mcp.tool
-    async def pathfinder_goto(
+    async def find_path(
         x: float,
         y: float,
         z: float,
-        bot_name: str | None = None,
-    ) -> dict[str, Any] | str:
-        """Walk to ``(x, y, z)`` via mineflayer-pathfinder; logs the planned path.
-
-        Plans the route with ``getPathTo`` (no digging), **logs the full path
-        array + status** so a failure is diagnosable, then drives to the route's
-        last node with an exact goal. Two outcomes by target cell, in ``mode``:
-
-        * **Empty cell** (``on``) → stands on it. For travel.
-        * **Occupied cell** (``beside`` — a block to dig/use/place) → stands
-          beside it and faces it (``facing_target``), ready to act.
-
-        No route → the bot does **not** move: ``arrived: False`` with ``status``
-        (``partial``/``noPath``/``timeout``) and ``stalled_at``. That means
-        "unreachable, switch target", not "retry". Run ``pathfinder_check_path``
-        to inspect the plan without moving.
-        """
-        return await _run_goto(lambda: _goto_reach(bot_name, x, y, z), bot_name)
-
-    @mcp.tool
-    async def pathfinder_check_path(
-        x: float,
-        y: float,
-        z: float,
-        include_path: bool = True,
         bot_name: str | None = None,
     ) -> dict[str, Any]:
-        """Plan (but do NOT walk) the route to ``(x, y, z)`` and log it.
+        """Plan a walkable route to ``(x, y, z)`` — but do NOT move.
 
-        Mirrors ``pathfinder_goto``'s planning exactly — same on/beside decision,
-        same no-dig ``getPathTo`` — but never moves the bot, and logs the result.
-        Use it to see *why* a goto would fail: ``status`` distinguishes a wall
-        (``noPath``), a partly-blocked route (``partial``, with ``end`` showing
-        how far it gets) and a search that ran out of budget (``timeout``).
+        Searches the 4-connected grid from where the bot stands, treating a cell
+        as walkable when its feet and head are air and it has a floor below
+        (solid or fence). Returns any valid route, not an optimised one.
 
-        Returns ``reachable``, ``mode``, ``status``, ``path_length``, ``cost``,
-        ``end`` (where the route stops), and — unless ``include_path=False`` —
-        the full ``path`` array of ``[x, y, z]`` nodes.
+        Returns ``reachable``, ``target_cell`` (the feet cell you'd stand at —
+        the cell itself if it's air, or on top of it if it's a block), ``route``
+        (the list of ``[x, y, z]`` cells to walk, after the start), ``length``,
+        and ``reason`` when unreachable. ``reachable: False`` means "pick another
+        target", not "retry".
         """
-        return await to_thread.run_sync(
-            lambda: _check_path(bot_name, x, y, z, include_path),
+        return await run_with_timeout(
+            lambda: _find_path(bot_name, x, y, z),
+            bot_name=bot_name,
+            timeout=GRID_TIMEOUT,
+            on_timeout="find_path",
         )
 
     @mcp.tool
-    async def pathfinder_set_goal_near(
+    async def goto(
         x: float,
         y: float,
         z: float,
-        radius: float = 1.0,
-        dynamic: bool = False,
         bot_name: str | None = None,
-    ) -> str:
-        """Set a background pathfinder goal near ``(x, y, z)``."""
-        return await to_thread.run_sync(
-            lambda: _set_goal(_goal_near(bot_name, x, y, z, radius), dynamic, bot_name),
+    ) -> dict[str, Any]:
+        """Walk to ``(x, y, z)``: plan a route, then step to it cell by cell.
+
+        Plans the same route as ``find_path``, then walks it — facing each next
+        cell and moving forward one cell, checking the bot actually landed before
+        the next step. Always moves forward; never strafes or reverses.
+
+        Returns ``arrived``, ``target_cell``, ``route``, ``walked`` (cells
+        actually stepped), ``pos``, and — if a step failed to land —
+        ``stalled_at`` with ``arrived: False``. No route → ``arrived: False`` and
+        the bot does not move.
+        """
+        return await run_with_timeout(
+            lambda: _goto(bot_name, x, y, z),
+            bot_name=bot_name,
+            timeout=GRID_TIMEOUT,
+            on_timeout="goto",
         )
 
-    @mcp.tool
-    async def pathfinder_set_goal_block(
-        x: float,
-        y: float,
-        z: float,
-        dynamic: bool = False,
-        bot_name: str | None = None,
-    ) -> str:
-        """Set a background pathfinder goal for an exact block."""
-        return await to_thread.run_sync(
-            lambda: _set_goal(_goal_block(bot_name, x, y, z), dynamic, bot_name),
-        )
+
+# --------------------------------------------------------------------------- #
+# Planning
+# --------------------------------------------------------------------------- #
 
 
-def _status(bot_name: str | None) -> dict[str, Any]:
-    manager.load_pathfinder(bot_name)
+def _find_path(bot_name: str | None, x: float, y: float, z: float) -> dict[str, Any]:
+    """find_path tool body: plan and log a route, no movement."""
     bot = manager.resolve_bot(bot_name)
-    pathfinder = bot.pathfinder
+    cache: dict[tuple[int, int, int], Any] = {}
+    plan = _plan(bot, cache, x, y, z)
+    _log_plan(x, y, z, plan)
+    if not plan["ok"]:
+        return {
+            "reachable": False,
+            "reason": plan["reason"],
+            "target_cell": list(plan["goal"]) if plan.get("goal") else None,
+            "route": [],
+            "length": 0,
+        }
     return {
-        "moving": bool(pathfinder.isMoving()),
-        "mining": bool(pathfinder.isMining()),
-        "building": bool(pathfinder.isBuilding()),
-        "goal": str(pathfinder.goal) if pathfinder.goal is not None else None,
+        "reachable": True,
+        "target_cell": list(plan["goal"]),
+        "kind": plan["kind"],
+        "route": [list(c) for c in plan["route"]],
+        "length": len(plan["route"]),
     }
 
 
-def _stop(bot_name: str | None) -> str:
-    manager.load_pathfinder(bot_name)
-    manager.resolve_bot(bot_name).pathfinder.stop()
-    return "stopped"
+def _goto(bot_name: str | None, x: float, y: float, z: float) -> dict[str, Any]:
+    """goto tool body: plan, then walk the route cell by cell."""
+    bot = manager.resolve_bot(bot_name)
+    cache: dict[tuple[int, int, int], Any] = {}
+    plan = _plan(bot, cache, x, y, z)
+    _log_plan(x, y, z, plan)
+    if not plan["ok"]:
+        return {
+            "arrived": False,
+            "status": "unreachable",
+            "reason": plan["reason"],
+            "target_cell": list(plan["goal"]) if plan.get("goal") else None,
+            "route": [],
+            "walked": 0,
+        }
+
+    route = list(plan["route"])
+    goal = plan["goal"]
+    walked, fail = _walk(bot, plan["start"], route)
+    if fail is not None:
+        _log.warning(
+            "goto -> %s stalled at %s after %s/%s cells (%s)",
+            list(goal),
+            fail["stalled_at"],
+            walked,
+            len(route),
+            fail["reason"],
+        )
+        return {
+            "arrived": False,
+            "status": "stalled",
+            "reason": fail["reason"],
+            "target_cell": list(goal),
+            "route": [list(c) for c in route],
+            "walked": walked,
+            "stalled_at": fail["stalled_at"],
+            "pos": _fmt(bot.get_pos()),
+        }
+
+    _log.info("goto -> %s arrived (%s steps)", list(goal), walked)
+    return {
+        "arrived": True,
+        "status": "success",
+        "kind": plan["kind"],
+        "target_cell": list(goal),
+        "route": [list(c) for c in route],
+        "walked": walked,
+        "pos": _fmt(bot.get_pos()),
+    }
 
 
-def _clear_goal(bot_name: str | None) -> str:
-    manager.load_pathfinder(bot_name)
-    manager.resolve_bot(bot_name).pathfinder.setGoal(None)
-    return "cleared"
+def _plan(
+    bot: Any, cache: dict[tuple[int, int, int], Any], x: float, y: float, z: float
+) -> dict[str, Any]:
+    """Resolve the target to a standable cell and A* a route to it.
 
-
-async def _run_goto(fn: Any, bot_name: str | None) -> Any:
-    """Run a goto under the outer backstop timeout + goal cleanup.
-
-    Returns whatever ``fn`` returns (a result dict for the reach goto), or a
-    timeout string if the outer backstop fires.
+    ``ok`` False carries a ``reason`` and, when the target resolved but no route
+    was found, the ``goal`` cell (so the caller can report where it aimed).
     """
-    return await run_with_timeout(
-        fn,
-        bot_name=bot_name,
-        timeout=PATHFINDER_TIMEOUT + _BACKSTOP_MARGIN_SECONDS,
-        on_timeout="pathfinder goto",
+    start = _cell(bot.get_pos())
+    resolved = _resolve_target(bot, cache, x, y, z)
+    if resolved is None:
+        return {
+            "ok": False,
+            "reason": "target is not a standable cell (no floor, or blocked overhead)",
+            "start": start,
+        }
+    gx, gy, gz, kind = resolved
+    goal = (gx, gy, gz)
+    route = _astar(bot, cache, start, goal)
+    if route is None:
+        return {
+            "ok": False,
+            "reason": "no valid path found (blocked, or beyond the search budget)",
+            "start": start,
+            "goal": goal,
+            "kind": kind,
+        }
+    return {"ok": True, "start": start, "goal": goal, "kind": kind, "route": route}
+
+
+def _resolve_target(
+    bot: Any, cache: dict[tuple[int, int, int], Any], x: float, y: float, z: float
+) -> tuple[int, int, int, str] | None:
+    """Resolve ``(x, y, z)`` to the feet cell the bot should end up in.
+
+    * the cell itself if it is already standable (you named the air you'd stand
+      in) → ``"in"``;
+    * one above it if the cell is a block (fence/solid) and standing on top is
+      valid (you named the tile you'd stand on) → ``"on_top"``.
+
+    ``None`` when neither is standable — nothing to stand on, or no headroom.
+    """
+    x, y, z = math.floor(x), math.floor(y), math.floor(z)
+    if _standable(bot, cache, x, y, z):
+        return (x, y, z, "in")
+    if not _is_empty(_block(bot, cache, x, y, z)) and _standable(bot, cache, x, y + 1, z):
+        return (x, y + 1, z, "on_top")
+    return None
+
+
+def _astar(
+    bot: Any,
+    cache: dict[tuple[int, int, int], Any],
+    start: tuple[int, int, int],
+    goal: tuple[int, int, int],
+) -> list[tuple[int, int, int]] | None:
+    """A* over standable cells; returns the cells after ``start``, or ``None``.
+
+    Uniform step cost with a Manhattan heuristic (admissible on this grid, so it
+    expands few nodes → few bridge reads). ``None`` if the goal is unreachable or
+    the node budget runs out. The bot's own start cell is assumed standable (it
+    is standing there); every other cell is checked before being expanded into.
+    """
+    if start == goal:
+        return []
+    open_heap: list[tuple[int, int, tuple[int, int, int]]] = [
+        (_manhattan(start, goal), 0, start)
+    ]
+    came_from: dict[tuple[int, int, int], tuple[int, int, int]] = {}
+    g_score = {start: 0}
+    closed: set[tuple[int, int, int]] = set()
+    expanded = 0
+    while open_heap:
+        _f, g, cur = heapq.heappop(open_heap)
+        if cur in closed:
+            continue
+        closed.add(cur)
+        if cur == goal:
+            return _reconstruct(came_from, cur)
+        expanded += 1
+        if expanded > GRID_MAX_NODES:
+            return None
+        for nb in _neighbors(bot, cache, cur):
+            if nb in closed:
+                continue
+            tentative = g + 1
+            if tentative < g_score.get(nb, 1 << 30):
+                g_score[nb] = tentative
+                came_from[nb] = cur
+                heapq.heappush(open_heap, (tentative + _manhattan(nb, goal), tentative, nb))
+    return None
+
+
+def _neighbors(
+    bot: Any, cache: dict[tuple[int, int, int], Any], cell: tuple[int, int, int]
+) -> Iterator[tuple[int, int, int]]:
+    """Standable cells reachable in one step from ``cell``.
+
+    Same-level cardinal steps always. Jump-up (``+1``) and drop (``-1..``) steps
+    are emitted only when ``_MAX_STEP_UP`` / ``_MAX_DROP`` allow — both 0 for now,
+    so this yields the four cardinal neighbours on the same Y. The vertical
+    branches are here so enabling levels later is a config change.
+    """
+    cx, cy, cz = cell
+    for dx, dz in _STEPS_XZ:
+        nx, nz = cx + dx, cz + dz
+        # Same level.
+        if _standable(bot, cache, nx, cy, nz):
+            yield (nx, cy, nz)
+            continue
+        # Jump up one (future: _MAX_STEP_UP >= 1).
+        stepped = False
+        for up in range(1, _MAX_STEP_UP + 1):
+            if _standable(bot, cache, nx, cy + up, nz):
+                yield (nx, cy + up, nz)
+                stepped = True
+                break
+        if stepped:
+            continue
+        # Drop down (future: _MAX_DROP >= 1).
+        for down in range(1, _MAX_DROP + 1):
+            if _standable(bot, cache, nx, cy - down, nz):
+                yield (nx, cy - down, nz)
+                break
+
+
+def _reconstruct(
+    came_from: dict[tuple[int, int, int], tuple[int, int, int]],
+    end: tuple[int, int, int],
+) -> list[tuple[int, int, int]]:
+    """Rebuild the path to ``end`` and drop the start cell (bot already there)."""
+    path = [end]
+    while end in came_from:
+        end = came_from[end]
+        path.append(end)
+    path.reverse()
+    return path[1:]
+
+
+# --------------------------------------------------------------------------- #
+# Walking
+# --------------------------------------------------------------------------- #
+
+
+def _walk(
+    bot: Any,
+    start: tuple[int, int, int],
+    route: list[tuple[int, int, int]],
+) -> tuple[int, dict[str, Any] | None]:
+    """Walk ``route`` in straight runs, facing each direction before moving.
+
+    The cells are grouped into maximal straight segments (a corridor of five
+    cells in one direction is one ``move_forward(5)``, not five calls). For each
+    run: turn to face that cardinal direction and **verify the facing took**
+    before stepping (a wrong turn otherwise walks the wrong way), move forward the
+    run length, then confirm the bot's X/Z reached the run's end cell. Always
+    moves forward — the facing is what changes at a corner, never the direction of
+    travel.
+
+    Every leg ends **in the middle of its cell**: we start centered and re-center
+    at each corner and the destination, so cardinal integer moves stay aligned and
+    the bot never hugs a corridor's side fences.
+
+    Returns ``(cells_walked, failure)``. ``failure`` is ``None`` on full success,
+    or ``{"stalled_at", "reason"}`` at the first run that could not face or land —
+    we stop there rather than wander. Y is ignored in the landing check so a fence
+    top's half-block rise doesn't read as a miss.
+    """
+    cells = [tuple(start), *(tuple(c) for c in route)]
+    walked = 0
+    i = 0
+    _recenter(bot, cells[0][0], cells[0][2])  # begin aligned in the start cell
+    while i < len(cells) - 1:
+        dx, dz = _dir(cells[i], cells[i + 1])
+        # Extend the run while the direction (and level) hold.
+        j = i + 1
+        while (
+            j < len(cells) - 1
+            and cells[j][1] == cells[i][1]
+            and _dir(cells[j], cells[j + 1]) == (dx, dz)
+        ):
+            j += 1
+        run_len = j - i
+        end = cells[j]
+
+        if not _face_and_verify(bot, dx, dz):
+            return walked, {
+                "stalled_at": list(cells[i + 1]),
+                "reason": "could not face the travel direction",
+            }
+        bot.move_forward(run_len)
+        if _xz(bot.get_pos()) != (end[0], end[2]):
+            return walked, {
+                "stalled_at": list(end),
+                "reason": "forward move did not reach the run end (blocked or over/undershot)",
+            }
+        _recenter(bot, end[0], end[2])  # step into the middle of this corner/target cell
+        walked += run_len
+        i = j
+    return walked, None
+
+
+def _recenter(bot: Any, cx: int, cz: int) -> bool:
+    """Nudge the bot to the middle of cell ``(cx, cz)`` — ``(cx+0.5, cz+0.5)``.
+
+    Best-effort and mode-aware. On a physics server we face the cell centre and
+    step the small remaining distance (toward the middle is always *away* from a
+    side fence, so it's safe in a corridor). On a server-authoritative grid the
+    bot is already placed exactly and fractional ``move_forward`` is rejected
+    (``ValueError``) — we catch that and accept the server's placement. Returns
+    whether the bot ended within ``_CENTER_TOL`` of the middle; the caller treats
+    a miss as non-fatal (still in the right cell), so this never fails a walk.
+    """
+    tx, tz = cx + 0.5, cz + 0.5
+    pos = bot.get_pos()
+    if math.hypot(tx - pos[0], tz - pos[2]) <= _CENTER_TOL:
+        return True
+    try:
+        bot.look_at(tx, pos[1], tz)
+        bot.move_forward(math.hypot(tx - pos[0], tz - pos[2]))
+    except ValueError:
+        return True  # grid server places the bot exactly; nothing to nudge
+    pos = bot.get_pos()
+    return math.hypot(tx - pos[0], tz - pos[2]) <= _CENTER_TOL
+
+
+def _face_and_verify(bot: Any, dx: int, dz: int) -> bool:
+    """Turn to face cardinal ``(dx, dz)`` and confirm the bot actually faces it.
+
+    Sets the absolute cardinal yaw and reads it back; a grid/quest server snaps
+    the turn server-authoritatively, so we allow a tolerance. One retry, because
+    a server-authoritative turn can need a beat to apply. Returns whether the
+    facing landed within tolerance — the caller refuses to step forward if not,
+    so a failed turn can never send the bot the wrong way.
+    """
+    target = yaw_for_direction(dx, dz)
+    for _ in range(2):
+        bot.set_turn(target)
+        if facing_ok(float(bot.get_yaw()), target):
+            return True
+    return False
+
+
+def _dir(a: tuple[int, int, int], b: tuple[int, int, int]) -> tuple[int, int]:
+    """Unit cardinal step (dx, dz) from cell ``a`` to adjacent cell ``b``."""
+    return (_sign(b[0] - a[0]), _sign(b[2] - a[2]))
+
+
+def _sign(value: int) -> int:
+    return (value > 0) - (value < 0)
+
+
+# --------------------------------------------------------------------------- #
+# Walkability + small helpers
+# --------------------------------------------------------------------------- #
+
+
+def _standable(
+    bot: Any, cache: dict[tuple[int, int, int], Any], x: int, y: int, z: int
+) -> bool:
+    """Whether the bot can stand with its feet in cell ``(x, y, z)``.
+
+    Feet and head must be air, and the floor below must be a **solid block** —
+    non-air and NOT a fence/wall. Fences are obstacles the search routes around,
+    never a surface to stand on: a fence's 1.5-block collision reaches into the
+    cell above, so the bot can't walk horizontally onto a fence top and a route
+    planned over one stalls. The floor requirement also confines the search to one
+    level — a cell over a hole is not standable, so we never drop off.
+    """
+    floor = _block(bot, cache, x, y - 1, z)
+    return (
+        _is_empty(_block(bot, cache, x, y, z))
+        and _is_empty(_block(bot, cache, x, y + 1, z))
+        and not _is_empty(floor)
+        and not _is_tall_block(floor)
     )
 
 
-def _pathing(pathfinder: Any) -> bool:
-    """Whether the pathfinder still has a goal to pursue.
+def _is_tall_block(name: object) -> bool:
+    """Whether a block name is a fence/wall — taller than 1, so not a valid floor.
 
-    On arrival mineflayer-pathfinder nulls its goal and stops moving (index.js
-    goal_reached: ``stateGoal = null; fullStop()``), so this drops to False.
-    Right after setGoal — goal set but no path computed yet — the goal check
-    keeps it True, so the loop never exits before the first tick.
+    Name-based because ``get_block`` returns only a name (no bounding box):
+    ``*_fence``, ``*_fence_gate``, ``fence`` and ``*_wall`` are the 1.5-tall blocks
+    a bot can't walk onto or through. Matching ``"fence"`` anywhere also covers
+    ``nether_brick_fence`` and the gates; ``_wall`` covers the cobblestone-wall
+    family (``wall_torch``/``wall_sign`` end in ``_torch``/``_sign``, not
+    ``_wall``, so they're not caught).
     """
-    if pathfinder.goal is not None:
+    n = str(name).split(":")[-1].lower()
+    return "fence" in n or n.endswith("_wall")
+
+
+def _block(
+    bot: Any, cache: dict[tuple[int, int, int], Any], x: int, y: int, z: int
+) -> Any:
+    """``bot.get_block`` with a per-plan cache (the world is static while we plan).
+
+    Neighbours share cells (a floor read here is a feet read there), so caching
+    turns the search's block reads roughly O(cells) instead of O(cells x checks),
+    which matters because every miss is a bridge round-trip.
+    """
+    key = (x, y, z)
+    if key not in cache:
+        cache[key] = bot.get_block(x, y, z)
+    return cache[key]
+
+
+def _is_empty(name: object) -> bool:
+    """Whether a ``get_block`` name means an empty (air-like) cell.
+
+    Normalises the ``minecraft:`` namespace so ``"minecraft:air"`` and ``"air"``
+    both count as empty.
+    """
+    if name is None:
         return True
-    return bool(pathfinder.isMoving())
+    return str(name).split(":")[-1].lower() in _EMPTY_BLOCKS
 
 
-def _goto(goal: object, bot_name: str | None) -> str:
-    """Drive to ``goal`` and block until arrival, a stall, or the timeout.
-
-    Uses non-blocking setGoal + a Python poll loop rather than the blocking
-    goto() Promise, so the worker thread never sits inside a bridge call: the
-    deadline below can stop the bot on this same thread, and if the request is
-    cancelled from outside, clearing the goal from another thread isn't queued
-    behind a pending goto. Both are why a timed-out goto used to keep walking.
-
-    Exits three ways: the pathfinder nulls its goal on exact arrival (loop
-    condition drops), our hard deadline fires, or — the important one — the
-    bot's block cell stops changing while a goal is still set. That last case is
-    a pathfinder that got as close as it can but can't satisfy the goal (a fence
-    between, a blocked final step); it stops moving yet never nulls the goal, so
-    without this we would poll uselessly until the full timeout.
-    """
-    bot = manager.resolve_bot(bot_name)
-    pathfinder = bot.pathfinder
-    pathfinder.setGoal(goal)
-    deadline = time.monotonic() + PATHFINDER_TIMEOUT
-    last_sig = _progress_sig(bot)
-    still_since = time.monotonic()
-    while _pathing(pathfinder):
-        now = time.monotonic()
-        if now >= deadline:
-            pathfinder.setGoal(None)
-            return (
-                f"timeout after {PATHFINDER_TIMEOUT:.0f}s: goal not reached; "
-                "bot stopped"
-            )
-        sig = _progress_sig(bot)
-        if sig != last_sig:
-            last_sig, still_since = sig, now
-        elif now - still_since > _STALL_SECONDS:
-            pathfinder.setGoal(None)
-            return f"stopped near {_fmt(bot.get_pos())}: pathfinder could not reach the goal"
-        time.sleep(_POLL_INTERVAL)
-    return _fmt(bot.get_pos())
+def _manhattan(a: tuple[int, int, int], b: tuple[int, int, int]) -> int:
+    """Manhattan distance including Y (Y term is 0 while we stay on one level)."""
+    return abs(a[0] - b[0]) + abs(a[1] - b[1]) + abs(a[2] - b[2])
 
 
 def _cell(pos: Any) -> tuple[int, int, int]:
@@ -254,358 +546,31 @@ def _cell(pos: Any) -> tuple[int, int, int]:
     return (math.floor(pos[0]), math.floor(pos[1]), math.floor(pos[2]))
 
 
-def _progress_sig(bot: Any) -> tuple[int, int, int, int]:
-    """A signature that changes while the bot walks **or** turns.
-
-    Block cell plus a coarse yaw bucket, so rotating in place — turning at a
-    corner, or a grid server's discrete server-authoritative turn — counts as
-    progress and does not trip the stall check. Only a bot that is neither
-    crossing cells nor turning is treated as stopped short. Yaw is bucketed to
-    ~5 degrees so sub-degree jitter while genuinely stuck still reads as still.
-    """
-    pos = bot.get_pos()
-    yaw_bucket = round(float(bot.get_yaw()) / 5.0)
-    return (math.floor(pos[0]), math.floor(pos[1]), math.floor(pos[2]), yaw_bucket)
-
-
-def _is_empty(name: object) -> bool:
-    """Whether a ``get_block`` name means an empty, standable-in cell.
-
-    Normalises so it works whether the name carries a ``minecraft:`` namespace
-    or not (``"minecraft:air"`` and ``"air"`` both count as empty).
-    """
-    if name is None:
-        return True
-    return str(name).split(":")[-1].lower() in _EMPTY_BLOCKS
-
-
-def _plan_reach(
-    bot: Any,
-    bot_name: str | None,
-    x: float,
-    y: float,
-    z: float,
-) -> dict[str, Any]:
-    """Plan the route to ``(x, y, z)`` with getPathTo (no movement), and log it.
-
-    An empty target cell means "stand on it" (``GoalBlock``); an occupied one
-    means "stand beside it" (``GoalGetToBlock``). Choosing by occupancy avoids
-    A* burning the whole budget trying to stand inside a solid block. The route
-    is logged in full — status, cost, search counts and the node array — so a
-    failure (``partial``/``noPath``/``timeout``) is visible in the log.
-    """
-    goals = manager.pathfinder_module(bot_name).goals
-    movements = manager.pathfinder_movements(bot_name)
-    mode = "on" if _is_empty(bot.get_block(int(x), int(y), int(z))) else "beside"
-    goal = (
-        goals.GoalBlock(int(x), int(y), int(z))
-        if mode == "on"
-        else goals.GoalGetToBlock(int(x), int(y), int(z))
-    )
-    result = bot.pathfinder.getPathTo(movements, goal, _PLAN_TIMEOUT_MS)
-    status = str(result.status)
-    nodes = [_node_xyz(result.path[i]) for i in range(int(result.path.length))]
-    plan = {
-        "mode": mode,
-        "status": status,
-        "nodes": nodes,
-        "cost": _round(getattr(result, "cost", None)),
-        "visited": _int_or_none(getattr(result, "visitedNodes", None)),
-        "generated": _int_or_none(getattr(result, "generatedNodes", None)),
-    }
-    _log_plan(x, y, z, plan)
-    return plan
-
-
-def _log_plan(x: float, y: float, z: float, plan: dict[str, Any]) -> None:
-    """Log a getPathTo plan: full path array plus the stats that explain failure."""
-    nodes = plan["nodes"]
-    fields = (
-        int(x),
-        int(y),
-        int(z),
-        plan["mode"],
-        plan["status"],
-        len(nodes),
-        plan["cost"],
-        nodes[-1] if nodes else None,
-        plan["visited"],
-        plan["generated"],
-        nodes,
-    )
-    line = (
-        "plan -> (%s,%s,%s) mode=%s status=%s len=%s cost=%s end=%s "
-        "visited=%s generated=%s path=%s"
-    )
-    if plan["status"] == "success":
-        _log.info(line, *fields)
-    else:
-        _log.warning(line + "  <- did NOT fully reach target", *fields)
-
-
-def _check_path(
-    bot_name: str | None,
-    x: float,
-    y: float,
-    z: float,
-    include_path: bool,
-) -> dict[str, Any]:
-    """Plan-only reachability that mirrors what ``pathfinder_goto`` would do."""
-    bot = manager.resolve_bot(bot_name)
-    plan = _plan_reach(bot, bot_name, x, y, z)
-    nodes = plan["nodes"]
-    summary: dict[str, Any] = {
-        "reachable": plan["status"] == "success",
-        "status": plan["status"],
-        "mode": plan["mode"],
-        "path_length": len(nodes),
-        "cost": plan["cost"],
-        "end": nodes[-1] if nodes else None,
-    }
-    if include_path:
-        summary["path"] = nodes
-    return summary
-
-
-def _goto_reach(bot_name: str | None, x: float, y: float, z: float) -> dict[str, Any]:
-    """Drive to ``(x, y, z)`` along its planned route, finishing the last step.
-
-    Plans (and logs) the route, drives with an exact ``GoalBlock`` to the
-    route's terminal node, then — for a stand-on target the planner stopped
-    short of — tries one manual step onto it. mineflayer-pathfinder refuses some
-    diagonal squeezes (past a fence corner, over a half-slab) that the bot can
-    physically walk; that manual step recovers them. For an occupied target it
-    faces the block so the caller can dig/use/place. Never moves when there is no
-    route at all.
-    """
-    bot = manager.resolve_bot(bot_name)
-    plan = _plan_reach(bot, bot_name, x, y, z)
-    nodes = plan["nodes"]
-    tx, ty, tz = int(x), int(y), int(z)
-    mode = plan["mode"]
-    if not nodes:
-        _log.warning(
-            "goto -> (%s,%s,%s) NOT started: status=%s (no route from here)",
-            tx,
-            ty,
-            tz,
-            plan["status"],
-        )
-        return {
-            "arrived": False,
-            "status": plan["status"],
-            "mode": mode,
-            "reason": "no route from current position",
-            "stalled_at": None,
-        }
-
-    # Drive to the closest reachable node — the target itself on success, or the
-    # nearest the planner could reach on a partial plan (so the manual last step
-    # below starts from right beside the target).
-    stand = nodes[-1]
-    goals = manager.pathfinder_module(bot_name).goals
-    drive = _goto(
-        goals.GoalBlock(int(stand[0]), int(stand[1]), int(stand[2])), bot_name
-    )
-    if isinstance(drive, str) and drive.startswith(("timeout", "stopped near")):
-        _log.warning("goto -> (%s,%s,%s) %s", tx, ty, tz, drive)
-        return {
-            "arrived": False,
-            "status": "timeout" if drive.startswith("timeout") else "stopped_short",
-            "mode": mode,
-            "reason": drive,
-        }
-
-    if mode == "beside":
-        bot.look_at(tx, ty, tz)
-        looked = bot.look_block()
-        facing = _is_target(looked, x, y, z)
-        if not facing and plan["status"] != "success":
-            _log.warning(
-                "goto -> (%s,%s,%s) beside NOT reached (status=%s)",
-                tx,
-                ty,
-                tz,
-                plan["status"],
-            )
-            return {
-                "arrived": False,
-                "status": plan["status"],
-                "mode": "beside",
-                "reason": "could not get beside/facing the target",
-                "stalled_at": stand,
-            }
-        _log.info(
-            "goto -> (%s,%s,%s) arrived mode=beside facing=%s", tx, ty, tz, facing
-        )
-        return {
-            "arrived": True,
-            "status": "success",
-            "mode": "beside",
-            "stood_at": stand,
-            "pos": _fmt(bot.get_pos()),
-            "facing_target": facing,
-            "aimed_block": _fmt(looked) if looked is not None else None,
-        }
-
-    # mode == "on": finish onto the target cell if the drive stopped short,
-    # walking cardinal steps around obstacles the planner refused (fence corner,
-    # half-slab). Full-block moves land the bot squarely in the cell.
-    manual = False
-    if tuple(_cell(bot.get_pos())) != (tx, ty, tz):
-        manual = _cardinal_finish(bot, tx, ty, tz)
-    cell = tuple(_cell(bot.get_pos()))
-    if cell != (tx, ty, tz):
-        _log.warning(
-            "goto -> (%s,%s,%s) stopped short at %s (status=%s)",
-            tx,
-            ty,
-            tz,
-            list(cell),
-            plan["status"],
-        )
-        return {
-            "arrived": False,
-            "status": "stopped_short",
-            "mode": "on",
-            "reason": "could not complete the final step onto the target",
-            "stalled_at": list(cell),
-        }
-    _log.info("goto -> (%s,%s,%s) arrived mode=on manual=%s", tx, ty, tz, manual)
-    return {
-        "arrived": True,
-        "status": "success_manual" if manual else "success",
-        "mode": "on",
-        "stood_at": list(cell),
-        "pos": _fmt(bot.get_pos()),
-    }
-
-
-# How far (Manhattan, in cells) the cardinal finisher will search/walk from
-# where the planner stopped. The finisher only runs after mineflayer-pathfinder
-# got the bot close, so the gap is small; this bounds the get_block cost.
-_FINISH_WINDOW = 8
-
-# 4-connected cardinal neighbours for the finisher (the bot turns, then walks).
-_STEPS_XZ: tuple[tuple[int, int], ...] = ((1, 0), (-1, 0), (0, 1), (0, -1))
-
-
 def _xz(pos: Any) -> tuple[int, int]:
-    """Floored X/Z cell — Y is ignored so a half-slab step doesn't fail a check."""
+    """Floored X/Z cell — Y is ignored so a fence-top half-step isn't a miss."""
     return (math.floor(pos[0]), math.floor(pos[2]))
 
 
-def _walkable_cell(bot: Any, x: int, y: int, z: int) -> bool:
-    """A cell the bot can stand in: air at feet+head, solid floor below.
-
-    A fence at feet fails the feet check, so the finisher routes around fences;
-    a slab counts as a solid floor, so half-block steps are fine.
-    """
-    return (
-        _is_empty(bot.get_block(x, y, z))
-        and _is_empty(bot.get_block(x, y + 1, z))
-        and not _is_empty(bot.get_block(x, y - 1, z))
-    )
-
-
-def _cardinal_route(
-    bot: Any, start: tuple[int, int, int], tx: int, ty: int, tz: int
-) -> list[tuple[int, int, int]] | None:
-    """Shortest 4-connected walkable route (cells after start) to the target.
-
-    Searches the bot's feet plane within ``_FINISH_WINDOW`` of the target, using
-    the bot's own block reads, so it plans exactly what plain move_forward can
-    walk. ``None`` if no cardinal route reaches the target in the window.
-    """
-    from collections import deque
-
-    sx, _sy, sz = start
-    if (sx, sz) == (tx, tz):
-        return []
-    seen = {(sx, sz)}
-    queue: deque[tuple[tuple[int, int], list[tuple[int, int, int]]]] = deque(
-        [((sx, sz), [])]
-    )
-    while queue:
-        (cx, cz), path = queue.popleft()
-        for dx, dz in _STEPS_XZ:
-            nx, nz = cx + dx, cz + dz
-            if (nx, nz) in seen or abs(nx - tx) + abs(nz - tz) > _FINISH_WINDOW:
-                continue
-            seen.add((nx, nz))
-            if not _walkable_cell(bot, nx, ty, nz):
-                continue
-            step_path = [*path, (nx, ty, nz)]
-            if (nx, nz) == (tx, tz):
-                return step_path
-            queue.append(((nx, nz), step_path))
-    return None
-
-
-def _cardinal_finish(bot: Any, tx: int, ty: int, tz: int) -> bool:
-    """Walk cardinal steps from where the planner parked onto the target.
-
-    Implements the "walk, turn, walk" approach: a small BFS to the target over
-    walkable cells, then ``look_at`` + ``move_forward(1)`` per cell, checking the
-    bot reached each one (X/Z only, so a slab's half-step doesn't fail it).
-    Returns whether the bot's X/Z cell is the target afterwards.
-    """
-    start = _cell(bot.get_pos())
-    route = _cardinal_route(bot, start, tx, ty, tz)
-    if not route:
-        return False
-    for nx, ny, nz in route:
-        bot.look_at(nx, ny, nz)
-        bot.move_forward(1)
-        if _xz(bot.get_pos()) != (nx, nz):
-            return False  # a step failed to land — stop rather than wander
-    return _xz(bot.get_pos()) == (tx, tz)
-
-
-def _is_target(looked: Any, x: float, y: float, z: float) -> bool:
-    """Whether ``look_block()``'s ``((x, y, z), name)`` result is the target."""
-    if not looked:
-        return False
-    coords = looked[0]
-    return (
-        int(coords[0]) == int(x)
-        and int(coords[1]) == int(y)
-        and int(coords[2]) == int(z)
-    )
-
-
-def _node_xyz(node: Any) -> list[int]:
-    """Extract a Move node's block position as integer ``[x, y, z]``."""
-    return [int(node.x), int(node.y), int(node.z)]
-
-
-def _round(value: object) -> float | None:
-    return round(float(value), 2) if value is not None else None
-
-
-def _int_or_none(value: object) -> int | None:
-    return int(value) if value is not None else None
-
-
-def _set_goal(goal: object, dynamic: bool, bot_name: str | None) -> str:
-    manager.resolve_bot(bot_name).pathfinder.setGoal(goal, dynamic)
-    return "set"
-
-
-def _goal_near(
-    bot_name: str | None,
-    x: float,
-    y: float,
-    z: float,
-    radius: float,
-) -> object:
-    goals = manager.pathfinder_module(bot_name).goals
-    return goals.GoalNear(x, y, z, radius)
-
-
-def _goal_block(bot_name: str | None, x: float, y: float, z: float) -> object:
-    goals = manager.pathfinder_module(bot_name).goals
-    return goals.GoalBlock(x, y, z)
+def _log_plan(x: float, y: float, z: float, plan: dict[str, Any]) -> None:
+    """Log a plan: the route and where it goes, or why it failed."""
+    target = (math.floor(x), math.floor(y), math.floor(z))
+    if plan["ok"]:
+        route = plan["route"]
+        _log.info(
+            "plan -> %s goal=%s kind=%s len=%s route=%s",
+            list(target),
+            list(plan["goal"]),
+            plan["kind"],
+            len(route),
+            [list(c) for c in route],
+        )
+    else:
+        _log.warning(
+            "plan -> %s FAILED: %s goal=%s",
+            list(target),
+            plan["reason"],
+            list(plan["goal"]) if plan.get("goal") else None,
+        )
 
 
 def _fmt(value: object) -> str:

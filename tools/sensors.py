@@ -44,8 +44,16 @@ def register(mcp: FastMCP) -> None:
 
     @mcp.tool
     async def get_block_in_front(bot_name: str | None = None) -> str:
-        """The solid block one step ahead as 'coords, name', or 'none' if only air."""
-        return await call("get_block_in_front", bot_name=bot_name)
+        """Name of the solid block one step ahead, or 'none' if nothing solid.
+
+        No coordinates — it is always one step along the facing axis; use
+        ``look_block`` when you also need the aimed block's position. Non-solid
+        cells (air/water/lava) read as 'none'.
+        """
+        # minethon names this method get_front_block; the tool keeps the clearer,
+        # model-facing name. (Calling the wrong name forwards to the JS bot,
+        # returns None, and raises "NoneType is not callable" when invoked.)
+        return await call("get_front_block", bot_name=bot_name)
 
     @mcp.tool
     async def get_block_property(

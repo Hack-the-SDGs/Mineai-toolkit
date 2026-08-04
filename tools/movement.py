@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from bot_session import call
+from tools.facing import yaw_for_name
 
 if TYPE_CHECKING:
     from fastmcp import FastMCP
@@ -71,3 +72,27 @@ def register(mcp: FastMCP) -> None:
     async def look_at(x: int, y: int, z: int, bot_name: str | None = None) -> str:
         """Face the given world coordinates; returns the new (yaw, pitch)."""
         return await call("look_at", x, y, z, bot_name=bot_name)
+
+    @mcp.tool
+    async def face_north(bot_name: str | None = None) -> str:
+        """Face north (−Z); returns the new (yaw, pitch).
+
+        On grid/quest servers the turn is server-authoritative and snaps to the
+        cardinal direction.
+        """
+        return await call("set_turn", yaw_for_name("north"), bot_name=bot_name)
+
+    @mcp.tool
+    async def face_south(bot_name: str | None = None) -> str:
+        """Face south (+Z); returns the new (yaw, pitch)."""
+        return await call("set_turn", yaw_for_name("south"), bot_name=bot_name)
+
+    @mcp.tool
+    async def face_east(bot_name: str | None = None) -> str:
+        """Face east (+X); returns the new (yaw, pitch)."""
+        return await call("set_turn", yaw_for_name("east"), bot_name=bot_name)
+
+    @mcp.tool
+    async def face_west(bot_name: str | None = None) -> str:
+        """Face west (−X); returns the new (yaw, pitch)."""
+        return await call("set_turn", yaw_for_name("west"), bot_name=bot_name)
