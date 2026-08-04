@@ -700,8 +700,8 @@ function renderFeed() {
           <span class="ev-name">${esc(toolLabel(ev.name))}</span>
           <pre class="args-box">${argsBox}</pre>
           <div class="result-cell">
-            <span class="result-box ${ev.error ? "err" : ""}">${resultBox}</span>
             <div class="ev-summary">${esc(summaryText(ev))}${r ? ` <span class="r ${r.err ? "err" : ""}">${r.err ? "" : "→ "}${esc(r.txt)}</span>` : ""}</div>
+            <span class="result-box ${ev.error ? "err" : ""}">${resultBox}</span>
           </div>
           <span class="time-col">
             <span class="ev-time">${fmtTime(ev.timestamp)}</span>

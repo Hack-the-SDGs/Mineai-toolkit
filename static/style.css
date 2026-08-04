@@ -185,6 +185,13 @@ input[type="checkbox"] { width: auto; accent-color: var(--accent); }
   color: var(--muted); border-bottom: 1px solid var(--border);
 }
 .log-colhead span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.log-colhead .col-result { display: flex; align-items: center; gap: 8px; overflow: visible; white-space: nowrap; }
+.result-raw-toggle {
+  display: flex; align-items: center; gap: 4px; font-size: 11px;
+  text-transform: none; letter-spacing: normal; color: var(--muted);
+  cursor: pointer; user-select: none;
+}
+.result-raw-toggle input { margin: 0; }
 .feed { padding: 8px 14px 14px; display: flex; flex-direction: column; gap: 4px; overflow-y: auto; max-height: 62vh; }
 .ev {
   background: var(--panel-2); border: 1px solid var(--border); border-radius: 9px;
@@ -204,6 +211,12 @@ input[type="checkbox"] { width: auto; accent-color: var(--accent); }
 }
 .ev-row .result-box.err { color: var(--red); }
 .result-cell { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+/* Result column: only the human-readable summary shows by default; the raw
+   black-background box (may be JSON) stays hidden for every row until the
+   single "詳細顯示" checkbox in the column header (#result-raw-toggle) is
+   checked — one global switch, not a per-row one. */
+.result-cell .result-box { display: none; }
+.log-card:has(#result-raw-toggle:checked) .result-box { display: block; }
 .ev-row .time-col {
   text-align: right; font-size: 12.5px; font-variant-numeric: tabular-nums;
   display: flex; flex-direction: column; gap: 2px; align-items: flex-end;
@@ -431,8 +444,9 @@ input[type="checkbox"] { width: auto; accent-color: var(--accent); }
 .map-empty.hide { display: none; }
 
 /* humanized feed rows: the readable summary sentence sits inside the Result
-   column, stacked under its value (see .result-cell above) — always visible;
-   the full raw JSON only shows once a row is clicked open (see .ev-detail). */
+   column, stacked above its value (see .result-cell above) — always visible;
+   the short raw box needs "詳細顯示" checked (see .result-cell:has above),
+   and the full raw JSON only shows once a row is clicked open (see .ev-detail). */
 .ev-summary { color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
 .ev-summary .r { color: var(--accent); font-family: var(--mono); }
 .ev-summary .r.err { color: var(--red); }

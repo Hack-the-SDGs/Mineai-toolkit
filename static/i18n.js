@@ -136,6 +136,7 @@ const T = {
   "lbl.arguments": { en: "Arguments", zh: "參數" },
   "lbl.result": { en: "Result", zh: "結果" },
   "lbl.error": { en: "Error", zh: "錯誤" },
+  "lbl.showRaw": { en: "Details", zh: "詳細顯示" },
 
   /* ---- stat strip ---- */
   "st.toolCalls": { en: "tool calls", zh: "tool 呼叫數" },
