@@ -9,7 +9,7 @@ description: Use when controlling a Minecraft bot through the mine-ai-toolkit MC
 
 mineai-toolkit is an MCP server that controls a live Minecraft bot. The tools are
 **low-level verbs** — one action each (`move_forward`, `turn`, `dig`, `place`,
-`find_block`, `pathfinder_goto_near`, …). They do exactly what they say and
+`find_block`, `pathfinder_goto`, …). They do exactly what they say and
 nothing more: `dig` breaks the block you are *already aiming at*, it does not
 walk to a block and dig it for you.
 
@@ -36,23 +36,22 @@ and the world state.
   `load_pathfinder()`, then check `pathfinder_status`. The pathfinder **never
   digs** (it routes around obstacles) — a "no path" result means blocked, not
   "try again".
-- **There are exactly two gotos — pick by intent, and you can't get it wrong:**
-  - **Acting on a block** (dig / use / place) → `pathfinder_goto_look_at_block(x,
-    y, z)`. Ends with the bot in reach of **and facing** the block.
-  - **Just travelling** to a place → `pathfinder_goto_near(x, y, z, radius)`.
-    Gets you *near*; it does **not** face or land on any specific block.
-- **Never use `goto_near` to line up on a block you'll act on.** A radius goal is
-  satisfied by *any* cell within range, so for a 3x3 with the target at the
-  centre the bot stops in a **corner** — not on, not facing — and still reports
-  "arrived". That's what `goto_look_at_block` is for.
-- **Check the path before you walk it.** `pathfinder_check_path(x, y, z,
-  goal_type)` plans the route *without moving the bot* and returns `reachable`.
-  Use it before a goto to any target that might be walled off — the classic trap
-  is a one-block spot separated by fences: the coords match but no path exists,
-  and a blind goto just stalls. `reachable: false` (status `partial`/`noPath`)
-  means pick a different target, don't launch the goto. Pass the **same**
-  `goal_type` you'll execute — `near` for a `goto_near`, `look_at_block` for a
-  `goto_look_at_block` — so the check matches the move.
+- **There is one goto: `pathfinder_goto(x, y, z)`.** No radius, no variants to
+  choose between. It follows the *real* A* route and drives with an **exact**
+  goal to the route's last cell — so it never stops on a "within radius" cell on
+  the wrong side of a fence, and never parks in a corner. It adapts to the
+  target automatically and tells you which in `mode`:
+  - **Empty target cell** (air) → stands **on** it (`mode: "on"`). For travel.
+  - **Occupied cell** (a block you'll dig/use/place) → stands **beside** it via
+    the route and turns to face it (`mode: "beside"`, `facing_target: true`).
+  When there is no route it returns `arrived: false` with `stalled_at` and does
+  **not** move — that means "unreachable, switch target", never "retry".
+- **Check the path before you walk it.** `pathfinder_check_path(x, y, z)` plans
+  the *same* route `pathfinder_goto` would, without moving the bot, and returns
+  `reachable`. Use it before a goto to any target that might be walled off — the
+  classic trap is a one-block spot separated by fences: the coords match but no
+  route exists. `reachable: false` (status `partial`/`noPath`) means pick a
+  different target, don't launch the goto.
 - **Know which bot you are driving.** If unsure, `get_active_bot` /
   `list_bots`. If no bot is active, stop and say so — do not guess a `bot_name`.
 - **Read the return string.** Tools return `'none'`, `'empty'`, `True`/`False`,
@@ -101,25 +100,23 @@ after the whole ladder fails do you switch targets (the rule above).
 
 1. **Confirm it's really stuck.** `pathfinder_status` + `get_pos`. If position is
    still changing, it is mid-route — wait, don't interrupt.
-2. **Are you using the right goto?** Acting on the block but used `goto_near`?
-   Switch to `pathfinder_goto_look_at_block(x, y, z)` — a radius goal parks the
-   bot in a corner reporting "arrived" without facing the block.
-3. **Just travelling? Loosen it.** If you only need to *be there*,
-   `pathfinder_goto_near(x, y, z, radius=2)`, then `radius=3`. Standing near is
-   usually enough for a travel goal.
-4. **Close the last gap manually.** Once near: `look_at(x, y, z)` / `set_turn`,
-   then `move_forward(1)`, and re-check `get_block_in_front`. Pathfinder gets you
-   *near*; your own steps get you *exact*.
-5. **Still blocked? It's a wall.** No route exists (pathfinder won't dig).
-   Confirm with `pathfinder_check_path(x, y, z, goal_type)` — a `partial`/`noPath`
-   status proves it's a wall, not a slow route, and its `end` shows how far the
-   route gets before the obstacle. Then `pathfinder_clear_goal`, apply
-   reachability → `find_blocks` and pick the nearest reachable alternative.
+2. **Did `pathfinder_goto` return `arrived: false`?** Then it already found no
+   route and **did not move** — this is not a stuck bot, it's an unreachable
+   target. Skip to step 4; do not re-issue the same goto.
+3. **`arrived: true` but you still can't act?** Check `mode` and `facing_target`.
+   If `mode: "beside"` but `facing_target: false`, the block moved out of line of
+   sight — re-`look_at(x, y, z)` and re-check `get_block_in_front`. Close any
+   last sub-block gap manually: `move_forward(1)`, then re-aim.
+4. **It's a wall.** No route exists (pathfinder won't dig). Confirm with
+   `pathfinder_check_path(x, y, z)` — a `partial`/`noPath` status proves it's a
+   wall, not a slow route, and its `end` shows how far a route gets before the
+   obstacle. Then `pathfinder_clear_goal`, apply reachability → `find_blocks` and
+   pick the nearest reachable alternative.
 
 One line to hold onto:
 
-> **Stuck: check you used the right goto, loosen a travel goal, step in manually
-> — and only then switch targets.**
+> **Stuck: `arrived:false` means switch targets, not retry; `facing_target:false`
+> means re-aim; a wall means enumerate alternatives.**
 
 ## Quick Reference
 
@@ -141,10 +138,9 @@ Optional `bot_name` on every action tool — omit it to use the active bot.
 | `find_block(name)` | coords | Nearest block by name |
 | `find_blocks(name, max=16)` | list, closest first, or `empty` | N nearest blocks |
 | `load_pathfinder` / `pathfinder_status` | status | Enable / inspect pathfinder |
-| `pathfinder_check_path(x, y, z, goal_type='near'\|'look_at_block', radius=1, timeout_ms=5000, include_path=True)` | `{reachable, status, path_length, cost, end, path}` | Plan a route **without moving** — test reachability before a goto; pass the *same* goal_type you'll execute |
+| `pathfinder_check_path(x, y, z, timeout_ms=5000, include_path=True)` | `{reachable, status, mode, path_length, cost, end, path}` | Plan the goto's route **without moving** — test reachability first |
 | `pathfinder_stop` / `pathfinder_clear_goal` | — | Halt / drop current goal |
-| `pathfinder_goto_near(x, y, z, radius=?)` | arrival | **Travel:** get within radius of a point (does not face a block) |
-| `pathfinder_goto_look_at_block(x, y, z)` | arrival | **Interact:** get in reach of **and facing** a block — use before dig/use/place |
+| `pathfinder_goto(x, y, z)` | `{arrived, mode, facing_target, stood_at, stalled_at, …}` | **The goto.** Real route, exact — stands *on* an empty target or *beside*+facing an occupied one; doesn't move if no route |
 | `move_forward(blocks=1)` | position | Walk; also `move_backward/left/right` |
 | `jump` | position | Jump once |
 | `turn(degrees)` | orientation | Relative turn (+ = left) |
@@ -176,8 +172,8 @@ pathfinder_check_path(10, 64, 20)   -> reachable: false, status: partial, end: [
 
 find_blocks("oak_log", 8)           -> [ (10 64 20), (18 63 5), ... ]  closest first
     # skip (10,64,20) — already failed
-pathfinder_check_path(18, 63, 5, goal_type="look_at_block")  -> reachable: true
-pathfinder_goto_look_at_block(18, 63, 5)  -> arrived  (in reach AND facing it)
+pathfinder_check_path(18, 63, 5)    -> reachable: true, mode: beside
+pathfinder_goto(18, 63, 5)          -> arrived: true, mode: beside, facing_target: true
 get_block_in_front                  -> 18 63 5, oak_log   (aim confirmed)
 hold("wooden_axe")                  -> True
 get_hand                            -> wooden_axe, 1
@@ -205,9 +201,10 @@ get_block(12, 65, 8)                -> cobblestone        (verified)
 | `dig` / `place` without aiming first | `look_block` / `get_block_in_front` to confirm the target, then act |
 | Retrying the same unreachable block | `find_blocks`, skip the failed coord, take the nearest reachable one |
 | A goto toward a fenced-off block that stalls | `pathfinder_check_path` first; only goto when `reachable` is true |
-| `goto_near(radius)` stops in a corner, "arrived" but not on/facing the target | Use `goto_look_at_block` for anything you'll dig/use/place; `goto_near` is travel-only |
+| Retrying `pathfinder_goto` after `arrived: false` | It already found no route and didn't move — switch target, don't retry |
+| Acting after `arrived: true` without checking `facing_target` | For `mode: "beside"`, confirm `facing_target` / `get_block_in_front` before dig/use/place |
 | A goto before `load_pathfinder` | Load the pathfinder once per bot first |
-| Treating "no path" as "retry" | It's blocked (pathfinder never digs) — loosen the goal or switch target |
+| Treating "no path" as "retry" | It's blocked (pathfinder never digs) — switch target |
 | Treating a `timeout` return as a crash | Goal is already cleared and bot stopped — re-sense, then decide |
 | `place` with an empty hand | `hold(block)` and confirm with `get_hand` first |
 | Ignoring the return string | Every tool tells you what happened — read it before the next step |

@@ -332,7 +332,7 @@ const CAT_COLOR = {
 const MOVE_VERB = { move_forward: "forward", move_backward: "backward", move_left: "left", move_right: "right" };
 const POS_TOOLS = new Set([
   "move_forward", "move_backward", "move_left", "move_right", "jump", "get_pos",
-  "pathfinder_goto_near", "pathfinder_goto_look_at_block",
+  "pathfinder_goto",
 ]);
 const FACE_TOOLS = new Set(["turn", "turn_left", "turn_right", "set_turn", "look_at", "get_orientation"]);
 const DIG_TOOLS = new Set(["dig", "place"]);

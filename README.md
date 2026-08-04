@@ -148,9 +148,8 @@ Pathfinder tools:
 - `pathfinder_status(bot_name?)`
 - `pathfinder_stop(bot_name?)`
 - `pathfinder_clear_goal(bot_name?)`
-- `pathfinder_goto_near(x, y, z, radius?, bot_name?)` — travel to a location
-- `pathfinder_goto_look_at_block(x, y, z, bot_name?)` — get in reach of and facing a block (use before dig/use/place)
-- `pathfinder_check_path(x, y, z, goal_type?, radius?, timeout_ms?, include_path?, bot_name?)` — plan a route without moving and report reachability
+- `pathfinder_goto(x, y, z, bot_name?)` — reach a coordinate along its real route: stand on an empty target, or beside-and-facing an occupied one; never a radius. Does not move if there's no route.
+- `pathfinder_check_path(x, y, z, timeout_ms?, include_path?, bot_name?)` — plan the same route without moving and report reachability
 - `pathfinder_set_goal_near(x, y, z, radius?, dynamic?, bot_name?)`
 - `pathfinder_set_goal_block(x, y, z, dynamic?, bot_name?)`
 

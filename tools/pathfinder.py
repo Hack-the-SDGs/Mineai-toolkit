@@ -53,85 +53,64 @@ def register(mcp: FastMCP) -> None:
         return await to_thread.run_sync(lambda: _clear_goal(bot_name))
 
     @mcp.tool
-    async def pathfinder_goto_near(
-        x: float,
-        y: float,
-        z: float,
-        radius: float = 1.0,
-        bot_name: str | None = None,
-    ) -> str:
-        """Block until the bot reaches within ``radius`` of ``(x, y, z)``.
-
-        This is the **travel** goto: use it to *get somewhere*, not to line up on
-        a block you will act on. A radius goal is satisfied by any cell within
-        range, so it does not guarantee the bot ends up on or facing ``(x, y,
-        z)`` — for dig/use/place, use ``pathfinder_goto_look_at_block`` instead.
-        """
-        return await _run_goto(
-            lambda: _goto(_goal_near(bot_name, x, y, z, radius), bot_name),
-            bot_name,
-        )
-
-    @mcp.tool
-    async def pathfinder_goto_look_at_block(
+    async def pathfinder_goto(
         x: float,
         y: float,
         z: float,
         bot_name: str | None = None,
-    ) -> str:
-        """Block until the bot is in reach of AND facing the target block.
+    ) -> dict[str, Any] | str:
+        """Reach ``(x, y, z)`` by following the real route — never a radius.
 
-        Prefer this over ``pathfinder_goto_near`` when you intend to act on a
-        specific block (dig/use/place). ``goto_near(radius)`` is satisfied by any
-        cell within ``radius`` — for a 3x3 with the target at the centre a corner
-        cell counts, so the bot stops in the corner, not aimed at the block, and
-        still reports "arrived". This goal instead ends with the bot positioned
-        within reach and already looking at the block face, so the follow-up
-        dig/use/place has a valid aim. Still verify with ``get_block_in_front``.
+        The single goto. It plans the actual A* route to the target, then drives
+        with an **exact** goal to the last node of that route, so the bot always
+        stops on a cell the planner proved reachable — no "within radius" cell on
+        the wrong side of a fence, no corner stop.
+
+        Two outcomes depending on the target cell:
+
+        * **Empty cell** (air) → stands **on** it (``mode: "on"``). Use for
+          travelling to a spot.
+        * **Occupied cell** (a block to dig/use/place) → stands **beside** it via
+          the route and turns to face it (``mode: "beside"``, ``facing_target``),
+          so the follow-up dig/use/place already has aim. Still confirm with
+          ``get_block_in_front`` before acting.
+
+        If no route reaches the target the bot does **not** move: returns
+        ``arrived: False`` with ``stalled_at`` (how far a route would get). Treat
+        that as "unreachable — pick another target", not "retry". Run
+        ``pathfinder_check_path`` first if you want to test without moving.
         """
-        return await _run_goto(
-            lambda: _goto(_goal_look_at_block(bot_name, x, y, z), bot_name),
-            bot_name,
-        )
+        return await _run_goto(lambda: _goto_reach(bot_name, x, y, z), bot_name)
 
     @mcp.tool
     async def pathfinder_check_path(
         x: float,
         y: float,
         z: float,
-        goal_type: str = "near",
-        radius: float = 1.0,
         timeout_ms: float = 5000.0,
         include_path: bool = True,
         bot_name: str | None = None,
     ) -> dict[str, Any]:
-        """Plan (but do NOT walk) a route to a target and report reachability.
+        """Plan (but do NOT walk) the route to ``(x, y, z)`` and report reach.
 
-        Runs the same A* the bot navigates with (``canDig=False``), so a fence
-        or wall between the bot and the target counts as a real obstacle. Use
-        this before a goto to confirm a spot is actually reachable instead of
-        merely close in x/y/z — e.g. a one-block ledge walled off by fences: the
-        coordinates match but no path exists, and a blind goto would stall
-        trying to reach a block it can't.
+        Mirrors ``pathfinder_goto`` exactly — same on/beside decision, same
+        no-dig A* — but never moves the bot. Runs with ``canDig=False``, so a
+        fence or wall between the bot and the target counts as a real obstacle.
+        Use it before a goto to confirm a spot is reachable instead of merely
+        close in x/y/z — e.g. a one-block ledge walled off by fences: the
+        coordinates match but no route exists, and a blind goto would stall.
 
-        ``goal_type`` mirrors the two goto tools: ``near`` (travel — within
-        ``radius`` of the point, pairs with ``pathfinder_goto_near``) or
-        ``look_at_block`` (in reach of and facing the block, pairs with
-        ``pathfinder_goto_look_at_block``). Check the *same* goal you will
-        execute so the answer matches what the goto will do.
-
-        Returns ``reachable`` plus the raw pathfinder ``status``
-        (``success`` = full path found, ``partial``/``timeout``/``noPath`` = it
-        could not fully reach), the path length, cost, and the ``end`` position
-        the planned path stops at — for a ``partial`` result that ``end`` is how
-        far it gets before the obstacle blocks it. ``path`` holds the full list
-        of ``[x, y, z]`` waypoints the bot would walk; set ``include_path=False``
-        to omit it and keep the reply small.
+        Returns ``reachable`` plus ``mode`` (``on`` for an empty target cell,
+        ``beside`` for an occupied one — matching what ``pathfinder_goto`` would
+        do), the raw pathfinder ``status`` (``success`` = full route found,
+        ``partial``/``timeout``/``noPath`` = it could not fully reach), the path
+        length, cost, and ``end`` — the cell the route stops at, i.e. where the
+        bot would stand (for a ``partial`` result, how far it gets before the
+        obstacle). ``path`` holds the full ``[x, y, z]`` waypoint list; set
+        ``include_path=False`` to omit it and keep the reply small.
         """
         return await to_thread.run_sync(
-            lambda: _check_path(
-                bot_name, x, y, z, goal_type, radius, timeout_ms, include_path
-            ),
+            lambda: _check_path(bot_name, x, y, z, timeout_ms, include_path),
         )
 
     @mcp.tool
@@ -186,8 +165,12 @@ def _clear_goal(bot_name: str | None) -> str:
     return "cleared"
 
 
-async def _run_goto(fn: Any, bot_name: str | None) -> str:
-    """Run a goto under the outer backstop timeout + goal cleanup."""
+async def _run_goto(fn: Any, bot_name: str | None) -> Any:
+    """Run a goto under the outer backstop timeout + goal cleanup.
+
+    Returns whatever ``fn`` returns (a result dict for the reach goto), or a
+    timeout string if the outer backstop fires.
+    """
     return await run_with_timeout(
         fn,
         bot_name=bot_name,
@@ -233,22 +216,59 @@ def _goto(goal: object, bot_name: str | None) -> str:
     return _fmt(bot.get_pos())
 
 
-def _goal_for(
+# get_block names that mean an empty cell the bot can stand *in*; anything else
+# is an occupied block to approach from beside rather than stand inside.
+_EMPTY_BLOCKS = {None, "", "air", "cave_air", "void_air"}
+
+# Planning budget (ms) for the goto's own reachability plan before it drives.
+_PLAN_TIMEOUT_MS = 5000.0
+
+
+def _is_empty(name: object) -> bool:
+    """Whether a ``get_block`` name means an empty, standable-in cell.
+
+    Normalises so it works whether the name carries a ``minecraft:`` namespace
+    or not (``"minecraft:air"`` and ``"air"`` both count as empty).
+    """
+    if name is None:
+        return True
+    short = str(name).split(":")[-1].lower()
+    return short in _EMPTY_BLOCKS
+
+
+def _plan_reach(
+    bot: Any,
     bot_name: str | None,
-    goal_type: str,
     x: float,
     y: float,
     z: float,
-    radius: float,
-) -> object:
-    """Build the goal a check/goto should use for the named ``goal_type``."""
-    if goal_type == "near":
-        return _goal_near(bot_name, x, y, z, radius)
-    if goal_type == "look_at_block":
-        return _goal_look_at_block(bot_name, x, y, z)
-    raise ValueError(
-        f"unknown goal_type {goal_type!r}; use near or look_at_block"
+    timeout_ms: float,
+) -> dict[str, Any]:
+    """Plan the real route to ``(x, y, z)`` without moving; classify on/beside.
+
+    An empty target cell means "stand on it" (``GoalBlock``); an occupied one
+    means "stand beside it" (``GoalGetToBlock``). Choosing by occupancy avoids
+    A* burning the whole ``timeout_ms`` trying to stand inside a solid block.
+    The route's last node is the cell the bot would actually stand on — proven
+    reachable — which is what the goto then drives to with an exact goal.
+    """
+    goals = manager.pathfinder_module(bot_name).goals
+    movements = manager.pathfinder_movements(bot_name)
+    mode = "on" if _is_empty(bot.get_block(int(x), int(y), int(z))) else "beside"
+    goal = (
+        goals.GoalBlock(int(x), int(y), int(z))
+        if mode == "on"
+        else goals.GoalGetToBlock(int(x), int(y), int(z))
     )
+    result = bot.pathfinder.getPathTo(movements, goal, timeout_ms)
+    nodes = [_node_xyz(result.path[i]) for i in range(int(result.path.length))]
+    cost = getattr(result, "cost", None)
+    return {
+        "mode": mode,
+        "status": str(result.status),
+        "nodes": nodes,
+        "cost": round(float(cost), 2) if cost is not None else None,
+    }
 
 
 def _check_path(
@@ -256,37 +276,87 @@ def _check_path(
     x: float,
     y: float,
     z: float,
-    goal_type: str,
-    radius: float,
     timeout_ms: float,
     include_path: bool,
 ) -> dict[str, Any]:
-    """Plan a route with the bot's no-dig movements and summarise reachability.
+    """Plan-only reachability that mirrors what ``pathfinder_goto`` would do.
 
     ``getPathTo`` runs A* to completion (or ``timeout_ms``) without moving the
-    bot and returns a Result whose ``status`` is ``success`` only when a full
-    path was found; ``partial`` means it got as close as it could but the goal
-    is blocked off (the fence-separated-block case), ``noPath`` means nothing,
-    ``timeout`` means it ran out of thinking time.
+    bot: ``status`` is ``success`` only when a full route was found; ``partial``
+    means it got as close as it could but the target is blocked off (the
+    fence-separated case), ``noPath`` nothing, ``timeout`` ran out of thinking.
     """
     bot = manager.resolve_bot(bot_name)
-    movements = manager.pathfinder_movements(bot_name)
-    goal = _goal_for(bot_name, goal_type, x, y, z, radius)
-    result = bot.pathfinder.getPathTo(movements, goal, timeout_ms)
-    status = str(result.status)
-    nodes = [_node_xyz(result.path[i]) for i in range(int(result.path.length))]
-    cost = getattr(result, "cost", None)
+    plan = _plan_reach(bot, bot_name, x, y, z, timeout_ms)
+    nodes = plan["nodes"]
     summary: dict[str, Any] = {
-        "reachable": status == "success",
-        "status": status,
-        "goal_type": goal_type,
+        "reachable": plan["status"] == "success",
+        "status": plan["status"],
+        "mode": plan["mode"],
         "path_length": len(nodes),
-        "cost": round(float(cost), 2) if cost is not None else None,
+        "cost": plan["cost"],
         "end": nodes[-1] if nodes else None,
     }
     if include_path:
         summary["path"] = nodes
     return summary
+
+
+def _goto_reach(bot_name: str | None, x: float, y: float, z: float) -> dict[str, Any]:
+    """Drive to ``(x, y, z)`` along its real route, then face it when beside.
+
+    Plans the route, drives with an exact ``GoalBlock`` to the route's terminal
+    node (proven reachable — no radius, no wrong-side-of-a-fence cell), and for
+    an occupied target approached from beside, turns to look at it so the caller
+    can immediately dig/use/place. Never moves when there is no route: reports
+    where a route would stall so the caller switches target instead of retrying.
+    """
+    bot = manager.resolve_bot(bot_name)
+    plan = _plan_reach(bot, bot_name, x, y, z, _PLAN_TIMEOUT_MS)
+    nodes = plan["nodes"]
+    if plan["status"] != "success" or not nodes:
+        return {
+            "arrived": False,
+            "status": plan["status"],
+            "mode": plan["mode"],
+            "reason": "no route onto or beside the target (walled off?)",
+            "stalled_at": nodes[-1] if nodes else None,
+        }
+    stand = nodes[-1]
+    goals = manager.pathfinder_module(bot_name).goals
+    drive = _goto(goals.GoalBlock(int(stand[0]), int(stand[1]), int(stand[2])), bot_name)
+    if isinstance(drive, str) and drive.startswith("timeout"):
+        return {
+            "arrived": False,
+            "status": "timeout",
+            "mode": plan["mode"],
+            "reason": drive,
+        }
+    result: dict[str, Any] = {
+        "arrived": True,
+        "status": "success",
+        "mode": plan["mode"],
+        "stood_at": stand,
+        "pos": _fmt(bot.get_pos()),
+    }
+    if plan["mode"] == "beside":
+        bot.look_at(int(x), int(y), int(z))
+        looked = bot.look_block()
+        result["facing_target"] = _is_target(looked, x, y, z)
+        result["aimed_block"] = _fmt(looked) if looked is not None else None
+    return result
+
+
+def _is_target(looked: Any, x: float, y: float, z: float) -> bool:
+    """Whether ``look_block()``'s ``((x, y, z), name)`` result is the target."""
+    if not looked:
+        return False
+    coords = looked[0]
+    return (
+        int(coords[0]) == int(x)
+        and int(coords[1]) == int(y)
+        and int(coords[2]) == int(z)
+    )
 
 
 def _node_xyz(node: Any) -> list[float]:
@@ -313,19 +383,6 @@ def _goal_near(
 def _goal_block(bot_name: str | None, x: float, y: float, z: float) -> object:
     goals = manager.pathfinder_module(bot_name).goals
     return goals.GoalBlock(x, y, z)
-
-
-def _goal_look_at_block(bot_name: str | None, x: float, y: float, z: float) -> object:
-    """Goal that ends with the bot in reach of and looking at ``(x, y, z)``.
-
-    ``GoalLookAtBlock(pos, world, options)`` needs the bot's world for its
-    line-of-sight/reach checks. The constructor only reads ``pos.x/.y/.z`` (it
-    copies them into its own Vec3), so a plain dict is enough across the bridge.
-    Options are left at the library defaults (reach 4.5, entityHeight 1.6).
-    """
-    bot = manager.resolve_bot(bot_name)
-    goals = manager.pathfinder_module(bot_name).goals
-    return goals.GoalLookAtBlock({"x": x, "y": y, "z": z}, bot.world)
 
 
 def _fmt(value: object) -> str:
