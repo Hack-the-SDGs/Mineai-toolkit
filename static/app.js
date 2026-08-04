@@ -122,42 +122,170 @@ window.addEventListener("resize", () => requestAnimationFrame(renderViz));
 const val = (id) => $(id).value.trim();
 
 function botCard(b) {
-  const status = b.closed
-    ? `<span class="badge offline">${t("badge.closed")}</span>`
-    : b.connected && b.spawned
-      ? `<span class="badge online">${t("badge.online")}</span>`
-      : `<span class="badge pending">${t("badge.connecting")}</span>`;
+  const statusClass = b.closed ? "offline" : b.connected && b.spawned ? "online" : "pending";
+  const statusText = b.closed ? t("badge.closed") : b.connected && b.spawned ? t("badge.online") : t("badge.connecting");
   // Bridge errors arrive with a full JS stack trace and absolute paths. The
   // first line carries the actual reason; the rest is noise on a student's
   // screen. The Activity tab still has the untruncated text.
   const whyRaw = b.kicked_reason || b.end_reason || b.last_error;
   const why = whyRaw ? String(whyRaw).split(/\n|\s+at\s/)[0].slice(0, 180) : "";
   const pos = b.position ? `${b.position}` : "—";
+  const user = b.username ? "@" + esc(b.username) : b.account ? t("bot.account", { name: esc(b.account) }) : "—";
+  // Name, position, and Health/Food/Pathfinder aren't rendered here — they're
+  // read from these data attrs by the stats popover (click/hover, see below),
+  // so the card itself stays down to one line. .row1 comes before .why in the
+  // DOM but .bot is flex-direction:column-reverse (see style.css), so .row1
+  // always sits at the card's bottom edge and .why (when present) grows
+  // upward from it instead of pushing .row1 down.
   return `
-    <div class="bot ${b.active ? "is-active" : ""}">
-      <div class="name-row">
-        <span class="name">${esc(b.name)}</span>
-        <span class="user">${b.username ? "@" + esc(b.username) : b.account ? t("bot.account", { name: esc(b.account) }) : "—"}</span>
-        ${b.active ? `<span class="badge active">${t("badge.active")}</span>` : ""}
-        ${status}
+    <div class="bot ${b.active ? "is-active" : ""}" data-name="${esc(b.name)}" data-pos="${esc(pos)}" data-health="${b.health ?? ""}" data-food="${b.food ?? ""}" data-pathfinder="${b.pathfinder_loaded ? "1" : "0"}">
+      <div class="row1">
+        <span class="dot ${statusClass}"></span>
+        <span class="status-text ${statusClass}">${statusText}</span>
+        ${b.active ? `<span class="star" title="${esc(t("badge.active"))}">★</span>` : ""}
+        <span class="user">${user}</span>
         <div class="actions">
-          <button class="btn small activate-btn" data-name="${esc(b.name)}" ${b.active || b.closed ? "disabled" : ""}>${t("btn.setActive")}</button>
+          ${
+            !b.active && !b.closed
+              ? `<button class="btn small icon activate-btn" data-name="${esc(b.name)}" title="${esc(t("btn.setActive"))}">▶</button>`
+              : ""
+          }
           ${
             b.closed
-              ? `<button class="btn small danger forget-btn" data-name="${esc(b.name)}">${t("btn.remove")}</button>`
-              : `<button class="btn small danger close-btn" data-name="${esc(b.name)}">${t("btn.close")}</button>`
+              ? `<button class="btn small danger icon forget-btn" data-name="${esc(b.name)}" title="${esc(t("btn.remove"))}">🗑</button>`
+              : `<button class="btn small danger icon close-btn" data-name="${esc(b.name)}" title="${esc(t("btn.close"))}">✕</button>`
           }
         </div>
-      </div>
-      <div class="stats">
-        <div class="stat"><span class="k">${t("stat.position")}</span><span class="v">${esc(pos)}</span></div>
-        <div class="stat"><span class="k">${t("stat.health")}</span><span class="v">${b.health ?? "—"}</span></div>
-        <div class="stat"><span class="k">${t("stat.food")}</span><span class="v">${b.food ?? "—"}</span></div>
-        <div class="stat"><span class="k">${t("stat.pathfinder")}</span><span class="v">${b.pathfinder_loaded ? t("val.yes") : t("val.no")}</span></div>
       </div>
       ${why ? `<div class="why">${esc(why)}</div>` : ""}
     </div>`;
 }
+
+/* Name/position/Health/Food/Pathfinder popover for a bot card — same escape-
+   the-scroll-strip positioning as showCallPop()/#call-pop below. Hovering
+   previews it (transient); clicking the card pins it open with a close
+   button until dismissed (✕, outside click, or Escape). */
+let pinnedBotEl = null;
+// Once the user drags a pinned popover, the periodic bot-list refresh (every
+// 15s, see refreshBots()) should keep refreshing its *content* but leave the
+// manually-chosen position alone instead of snapping it back under the card.
+let botPopDragged = false;
+function renderBotStatsPop(botEl, pinned, reposition = true) {
+  const pop = $("bot-stats-pop");
+  if (!pop) return;
+  const name = botEl.dataset.name || "";
+  const pos = botEl.dataset.pos || "—";
+  const health = botEl.dataset.health || "—";
+  const food = botEl.dataset.food || "—";
+  const pathfinder = botEl.dataset.pathfinder === "1" ? t("val.yes") : t("val.no");
+  pop.innerHTML = `
+    <div class="bsp-head">
+      <div class="bsp-name">${esc(name)} <span class="bsp-pos">(${esc(pos)})</span></div>
+      ${pinned ? `<span class="bsp-close" title="${esc(t("btn.close"))}">✕</span>` : ""}
+    </div>
+    <div class="bsp-row">
+      <div class="stat"><span class="k">${t("stat.health")}</span><span class="v">${esc(health)}</span></div>
+      <div class="stat"><span class="k">${t("stat.food")}</span><span class="v">${esc(food)}</span></div>
+      <div class="stat"><span class="k">${t("stat.pathfinder")}</span><span class="v">${pathfinder}</span></div>
+    </div>
+  `;
+  pop.classList.toggle("pinned", pinned);
+  pop.hidden = false;
+  if (!reposition) return;
+  const r = botEl.getBoundingClientRect();
+  pop.style.left = Math.max(8, Math.min(window.innerWidth - pop.offsetWidth - 8, r.left)) + "px";
+  pop.style.top = r.bottom + 6 + "px";
+}
+function showBotStatsPop(botEl) {
+  if (pinnedBotEl) return;
+  renderBotStatsPop(botEl, false);
+}
+function hideBotStatsPop() {
+  if (pinnedBotEl) return;
+  const pop = $("bot-stats-pop");
+  if (pop) pop.hidden = true;
+}
+function pinBotStatsPop(botEl) {
+  pinnedBotEl = botEl;
+  botPopDragged = false;
+  renderBotStatsPop(botEl, true);
+}
+function unpinBotStatsPop() {
+  pinnedBotEl = null;
+  botPopDragged = false;
+  const pop = $("bot-stats-pop");
+  if (pop) {
+    pop.hidden = true;
+    pop.classList.remove("pinned", "dragging");
+  }
+}
+// Drag-to-move for a pinned popover — grab anywhere on its header (.bsp-head)
+// except the close button.
+function startBotPopDrag(e) {
+  const pop = $("bot-stats-pop");
+  if (!pop) return;
+  e.preventDefault();
+  const startX = e.clientX;
+  const startY = e.clientY;
+  const r = pop.getBoundingClientRect();
+  const startLeft = r.left;
+  const startTop = r.top;
+  pop.classList.add("dragging");
+  function onMove(ev) {
+    botPopDragged = true;
+    const maxLeft = window.innerWidth - pop.offsetWidth - 4;
+    const maxTop = window.innerHeight - pop.offsetHeight - 4;
+    pop.style.left = Math.max(4, Math.min(maxLeft, startLeft + (ev.clientX - startX))) + "px";
+    pop.style.top = Math.max(4, Math.min(maxTop, startTop + (ev.clientY - startY))) + "px";
+  }
+  function onUp() {
+    pop.classList.remove("dragging");
+    document.removeEventListener("mousemove", onMove);
+    document.removeEventListener("mouseup", onUp);
+  }
+  document.addEventListener("mousemove", onMove);
+  document.addEventListener("mouseup", onUp);
+}
+(() => {
+  const host = $("bots");
+  const pop = $("bot-stats-pop");
+  if (!host) return;
+  host.addEventListener("mouseover", (e) => {
+    const botEl = e.target.closest(".bot");
+    if (botEl && host.contains(botEl)) showBotStatsPop(botEl);
+  });
+  host.addEventListener("mouseout", (e) => {
+    if (!e.target.closest(".bot")) return;
+    const to = e.relatedTarget;
+    if (!to || !to.closest || !to.closest(".bot")) hideBotStatsPop();
+  });
+  host.addEventListener("click", (e) => {
+    if (e.target.closest(".actions")) return; // don't hijack activate/close/remove clicks
+    const botEl = e.target.closest(".bot");
+    if (!botEl || !host.contains(botEl)) return;
+    if (pinnedBotEl === botEl) unpinBotStatsPop();
+    else pinBotStatsPop(botEl);
+  });
+  if (pop) {
+    pop.addEventListener("click", (e) => {
+      if (e.target.closest(".bsp-close")) unpinBotStatsPop();
+    });
+    pop.addEventListener("mousedown", (e) => {
+      if (!pop.classList.contains("pinned")) return;
+      if (e.target.closest(".bsp-close")) return;
+      if (!e.target.closest(".bsp-head")) return;
+      startBotPopDrag(e);
+    });
+  }
+  document.addEventListener("click", (e) => {
+    if (!pinnedBotEl) return;
+    if (e.target.closest("#bot-stats-pop") || e.target.closest(".bot")) return;
+    unpinBotStatsPop();
+  });
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && pinnedBotEl) unpinBotStatsPop();
+  });
+})();
 
 async function refreshBots() {
   try {
@@ -174,11 +302,25 @@ async function refreshBots() {
         <div class="big">${t("bots.empty.title")}</div>
         <div>${t("bots.empty.desc")}</div>
       </div>`;
+      if (pinnedBotEl) unpinBotStatsPop();
       return;
     }
     // Newest first, so a freshly created bot lands at the left edge of the
     // bar instead of scrolled off the right end of the row.
     host.innerHTML = bots.slice().reverse().map(botCard).join("");
+    // This rebuilds every .bot node, so a pinned popover (see
+    // renderBotStatsPop()) would otherwise go stale on the next 15s poll —
+    // re-point it at the fresh node with the same name, or unpin if the bot
+    // is gone (e.g. removed while its popover was pinned open).
+    if (pinnedBotEl) {
+      const fresh = host.querySelector(`.bot[data-name="${CSS.escape(pinnedBotEl.dataset.name)}"]`);
+      if (fresh) {
+        pinnedBotEl = fresh;
+        renderBotStatsPop(fresh, true, !botPopDragged);
+      } else {
+        unpinBotStatsPop();
+      }
+    }
     host.querySelectorAll(".activate-btn").forEach((btn) =>
       btn.addEventListener("click", async () => {
         try {
@@ -240,7 +382,10 @@ function setCreatePopoverOpen(open) {
   $("create-toggle").textContent = open ? "✕" : "－";
   if (open) $("f-name").focus();
 }
-$("create-toggle").addEventListener("click", () => setCreatePopoverOpen(createPopover.hidden));
+$("create-toggle").addEventListener("click", () => {
+  setQuickCreateListOpen(false);
+  setCreatePopoverOpen(createPopover.hidden);
+});
 $("create-popover-close").addEventListener("click", () => setCreatePopoverOpen(false));
 document.addEventListener("click", (e) => {
   if (createPopover.hidden) return;
@@ -251,12 +396,30 @@ document.addEventListener("keydown", (e) => {
   if (e.key === "Escape" && !createPopover.hidden) setCreatePopoverOpen(false);
 });
 
+/* "Create other" is a small dropdown next to the g_ai_fire2_x quick-create
+   button, holding the presets that don't need top-billing plus the "－"
+   toggle for the full form. */
+const quickCreateList = $("quick-create-list");
+function setQuickCreateListOpen(open) {
+  quickCreateList.hidden = !open;
+  $("create-other-toggle").classList.toggle("on", open);
+}
+$("create-other-toggle").addEventListener("click", () => setQuickCreateListOpen(quickCreateList.hidden));
+document.addEventListener("click", (e) => {
+  if (quickCreateList.hidden) return;
+  if (e.target.closest("#quick-create-list") || e.target.closest("#create-other-toggle")) return;
+  setQuickCreateListOpen(false);
+});
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && !quickCreateList.hidden) setQuickCreateListOpen(false);
+});
+
 /* Quick-create presets: one click creates a bot straight from the account
-   shorthand, skipping the popover form. "havefun" is used as-is; the
-   "g_ai_fire1_x" / "g_ai_fire2_x" presets have their trailing "x" replaced
-   by whatever number is typed into the "編號" (preset-number) field, so
-   e.g. "g_ai_fire1_x" + "3" -> "g_ai_fire1_3". The resulting account string
-   also doubles as the bot's name. */
+   shorthand, skipping the popover form. "havefun", "bot", and "g_ai_fire2_1"
+   are used as-is; "g_ai_fire2_x" has its trailing "x" replaced by whatever
+   number is typed into the "編號" (preset-number) field, so e.g.
+   "g_ai_fire2_x" + "3" -> "g_ai_fire2_3". The resulting account string also
+   doubles as the bot's name. */
 async function quickCreateBot(preset) {
   let account = preset;
   if (preset.endsWith("_x")) {
@@ -286,7 +449,10 @@ async function quickCreateBot(preset) {
   }
 }
 document.querySelectorAll(".quick-create").forEach((btn) => {
-  btn.addEventListener("click", () => quickCreateBot(btn.dataset.preset));
+  btn.addEventListener("click", () => {
+    setQuickCreateListOpen(false);
+    quickCreateBot(btn.dataset.preset);
+  });
 });
 
 $("create-form").addEventListener("submit", async (ev) => {

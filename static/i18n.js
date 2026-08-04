@@ -60,7 +60,8 @@ const T = {
   "btn.creating": { en: "Creating…", zh: "建立中…" },
   "hint.advOptionsShort": { en: "Advanced", zh: "進階" },
   "label.presetNumber": { en: "No.", zh: "編號" },
-  "btn.quickCreate": { en: "+ Create ", zh: "＋ 創建 " },
+  "btn.quickCreate": { en: "+", zh: "+" },
+  "btn.createOther": { en: "+Other", zh: "+其他" },
 
   /* ---- bots card ---- */
   "btn.refresh": { en: "↻ Refresh", zh: "↻ 重新整理" },

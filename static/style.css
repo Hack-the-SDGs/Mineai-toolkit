@@ -109,33 +109,65 @@ input[type="checkbox"] { width: auto; accent-color: var(--accent); }
 
 /* bot card: a horizontally-scrolling row of cards in the bot bar (one per
    bot — multiple bots can run at once, see refreshBots()/botCard() in app.js). */
-.bots { flex: 1; min-width: 220px; display: flex; gap: 10px; overflow-x: auto; padding-bottom: 2px; }
+/* align-items: flex-end so cards of different heights (e.g. a closed bot's
+   extra "why" line) share a common bottom edge instead of all stretching to
+   match the tallest card with empty space hanging off the bottom. */
+.bots { flex: 1; min-width: 220px; display: flex; align-items: flex-end; gap: 10px; overflow-x: auto; padding-bottom: 2px; }
 .bot {
-  flex: 0 0 300px; min-width: 0;
+  flex: 0 0 300px; min-width: 0; cursor: pointer;
   background: var(--panel-2); border: 1px solid var(--border); border-radius: 10px;
-  padding: 10px 12px; display: flex; flex-direction: column; gap: 8px;
+  padding: 8px 10px; display: flex; flex-direction: column-reverse; gap: 4px;
 }
 .bot.is-active { border-color: var(--accent); box-shadow: 0 0 0 1px rgba(78,161,255,.35); }
-.bot .name-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.bot .name { font-size: 14px; font-weight: 600; }
-.bot .user { color: var(--muted); font-size: 12.5px; }
-.bot .actions { margin-left: auto; display: flex; gap: 6px; flex-shrink: 0; }
+/* .row1 is a single-line summary; name/position/Health/Food/Pathfinder move
+   to the click/hover popover (see .bot-stats-pop / renderBotStatsPop() in
+   app.js) to keep the card short. column-reverse above (with .row1 first in
+   the DOM) pins .row1 to the card's bottom edge so it lines up across cards
+   regardless of whether .why is present. */
+.bot .row1 { display: flex; align-items: center; gap: 7px; min-width: 0; }
+.bot .dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; background: var(--muted); }
+.bot .dot.online { background: var(--green); }
+.bot .dot.pending { background: var(--amber); }
+.bot .dot.offline { background: var(--red); }
+.bot .status-text { font-size: 11px; flex-shrink: 0; white-space: nowrap; color: var(--muted); }
+.bot .status-text.online { color: var(--green); }
+.bot .status-text.pending { color: var(--amber); }
+.bot .status-text.offline { color: var(--red); }
+.bot .star { flex-shrink: 0; font-size: 12px; color: var(--accent); }
+.bot .user {
+  color: var(--muted); font-size: 12.5px; flex: 1 1 auto; min-width: 20px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.bot .actions { display: flex; gap: 6px; flex-shrink: 0; }
+.bot .actions .icon { padding: 4px 8px; line-height: 1; }
 .bots .empty { flex: 1; }
 
-.badge {
-  font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 999px;
-  border: 1px solid var(--border); color: var(--muted); white-space: nowrap;
-}
-.badge.active { color: var(--accent); border-color: rgba(78,161,255,.4); background: rgba(78,161,255,.1); }
-.badge.online { color: var(--green); border-color: rgba(63,185,80,.4); background: rgba(63,185,80,.1); }
-.badge.offline { color: var(--red); border-color: rgba(248,81,73,.4); background: rgba(248,81,73,.1); }
-.badge.pending { color: var(--amber); border-color: rgba(210,153,34,.4); background: rgba(210,153,34,.1); }
+.why { font-size: 12.5px; color: var(--amber); }
 
-.stats { display: flex; gap: 18px; margin-top: 8px; flex-wrap: wrap; }
-.stat { display: flex; flex-direction: column; }
-.stat .k { font-size: 10.5px; color: var(--muted); text-transform: uppercase; letter-spacing: .5px; }
-.stat .v { font-size: 13px; font-variant-numeric: tabular-nums; }
-.why { margin-top: 8px; font-size: 12.5px; color: var(--amber); }
+/* name/position/Health/Food/Pathfinder popover for a bot card, positioned in
+   JS via getBoundingClientRect (same pattern as .call-pop) so it escapes the
+   horizontally-scrolling .bots strip instead of getting clipped. Transient
+   on hover (pointer-events: none, no close button); .pinned once clicked, so
+   it stays open and its ✕ becomes clickable. */
+.bot-stats-pop {
+  position: fixed; z-index: 60; pointer-events: none;
+  background: var(--panel); border: 1px solid var(--border); border-radius: 8px;
+  box-shadow: var(--shadow); padding: 8px 11px; display: flex; flex-direction: column; gap: 6px;
+}
+.bot-stats-pop.pinned { pointer-events: auto; }
+.bot-stats-pop[hidden] { display: none; }
+.bot-stats-pop .bsp-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.bot-stats-pop.pinned .bsp-head { cursor: grab; }
+.bot-stats-pop.dragging .bsp-head { cursor: grabbing; }
+.bot-stats-pop.dragging { user-select: none; }
+.bot-stats-pop .bsp-name { font-size: 12.5px; font-weight: 600; }
+.bot-stats-pop .bsp-pos { font-weight: 400; color: var(--muted); font-family: var(--mono); font-size: 11.5px; }
+.bot-stats-pop .bsp-close { cursor: pointer; color: var(--muted); font-size: 12px; line-height: 1; padding: 0 2px; }
+.bot-stats-pop .bsp-close:hover { color: var(--text); }
+.bot-stats-pop .bsp-row { display: flex; gap: 16px; }
+.bot-stats-pop .stat { display: flex; flex-direction: column; }
+.bot-stats-pop .stat .k { font-size: 10.5px; color: var(--muted); text-transform: uppercase; letter-spacing: .5px; }
+.bot-stats-pop .stat .v { font-size: 13px; font-variant-numeric: tabular-nums; }
 
 .empty { text-align: center; color: var(--muted); padding: 30px 10px; }
 .empty .big { font-size: 15px; color: var(--text); margin-bottom: 4px; }
@@ -426,6 +458,19 @@ input.preset-number { width: 90px; flex: 0 0 90px; font-family: var(--mono); }
 .btn.quick-create { white-space: nowrap; }
 .adv-toggle-btn { font-weight: 600; line-height: 1; min-width: 34px; padding: 8px 12px; }
 .adv-toggle-btn.on { background: rgba(78,161,255,.15); border-color: var(--accent); color: var(--accent); }
+
+/* "Create other" dropdown: quick-create presets that don't fit in the compact
+   bot-bar row live here instead, anchored under their toggle button. */
+.quick-create-other { position: relative; }
+#create-other-toggle.on { background: rgba(78,161,255,.15); border-color: var(--accent); color: var(--accent); }
+.quick-create-list {
+  position: absolute; top: calc(100% + 6px); left: 0; z-index: 20; min-width: 160px;
+  background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, .5), var(--shadow); animation: popIn .15s ease-out;
+  padding: 8px; display: flex; flex-direction: column; gap: 6px;
+}
+.quick-create-list[hidden] { display: none; }
+.quick-create-list .btn { width: 100%; text-align: left; }
 
 /* full create form, tucked into a popover anchored under the bot-bar controls */
 @keyframes popIn { from { opacity: 0; transform: translateY(-6px) scale(.98); } to { opacity: 1; transform: translateY(0) scale(1); } }

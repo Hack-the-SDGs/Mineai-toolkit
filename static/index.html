@@ -100,12 +100,16 @@
                 <div class="bbc-row">
                   <span class="bbc-label" data-i18n="label.presetNumber">No.</span>
                   <input type="text" id="preset-number" class="preset-number" placeholder="1、2、3…" autocomplete="off" />
-                  <button type="button" class="btn quick-create" data-preset="havefun"><span data-i18n="btn.quickCreate">+ Create </span>havefun</button>
-                  <button type="button" class="btn adv-toggle-btn" id="create-toggle" title="Advanced" data-i18n-title="hint.advOptionsShort">－</button>
-                </div>
-                <div class="bbc-row">
-                  <button type="button" class="btn quick-create" data-preset="g_ai_fire1_x"><span data-i18n="btn.quickCreate">+ Create </span>g_ai_fire1_x</button>
-                  <button type="button" class="btn quick-create" data-preset="g_ai_fire2_x"><span data-i18n="btn.quickCreate">+ Create </span>g_ai_fire2_x</button>
+                  <button type="button" class="btn quick-create" data-preset="g_ai_fire2_x"><span data-i18n="btn.quickCreate">+</span>g_ai_fire2_x</button>
+                  <div class="quick-create-other">
+                    <button type="button" class="btn" id="create-other-toggle" data-i18n="btn.createOther">+其他</button>
+                    <div class="quick-create-list" id="quick-create-list" hidden>
+                      <button type="button" class="btn quick-create" data-preset="havefun"><span data-i18n="btn.quickCreate">+</span>havefun</button>
+                      <button type="button" class="btn quick-create" data-preset="bot"><span data-i18n="btn.quickCreate">+</span>bot</button>
+                      <button type="button" class="btn quick-create" data-preset="g_ai_fire1_x"><span data-i18n="btn.quickCreate">+</span>g_ai_fire1_x</button>
+                      <button type="button" class="btn adv-toggle-btn" id="create-toggle" title="Advanced" data-i18n-title="hint.advOptionsShort">－</button>
+                    </div>
+                  </div>
                 </div>
               </div>
 
@@ -209,6 +213,7 @@
     </div>
 
     <div class="call-pop" id="call-pop" hidden></div>
+    <div class="bot-stats-pop" id="bot-stats-pop" hidden></div>
 
     <div class="toasts" id="toasts"></div>
     <script src="/static/i18n.js"></script>
