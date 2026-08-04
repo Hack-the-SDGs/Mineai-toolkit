@@ -251,12 +251,43 @@ document.addEventListener("keydown", (e) => {
   if (e.key === "Escape" && !createPopover.hidden) setCreatePopoverOpen(false);
 });
 
-/* TODO(quick-create presets): the ".quick-create" buttons and the "編號"
-   (preset-number) field in the bot bar are not wired up yet — they're laid
-   out per the new design but intentionally left inert for now. Planned
-   behavior: "havefun" is unrelated to the "編號" field; for
-   "g_ai_fire1_x" / "g_ai_fire2_x" the "x" is meant to be replaced by the
-   number typed into "編號" once this is implemented. */
+/* Quick-create presets: one click creates a bot straight from the account
+   shorthand, skipping the popover form. "havefun" is used as-is; the
+   "g_ai_fire1_x" / "g_ai_fire2_x" presets have their trailing "x" replaced
+   by whatever number is typed into the "編號" (preset-number) field, so
+   e.g. "g_ai_fire1_x" + "3" -> "g_ai_fire1_3". The resulting account string
+   also doubles as the bot's name. */
+async function quickCreateBot(preset) {
+  let account = preset;
+  if (preset.endsWith("_x")) {
+    const num = val("preset-number");
+    if (!num) {
+      toast(t("toast.presetNumberRequired.title"), t("toast.presetNumberRequired.msg"), true);
+      $("preset-number").focus();
+      return;
+    }
+    account = preset.slice(0, -1) + num;
+  }
+
+  const quickBtns = document.querySelectorAll(".quick-create");
+  quickBtns.forEach((b) => (b.disabled = true));
+  try {
+    await api("/bots", {
+      method: "POST",
+      body: JSON.stringify({ name: account, account, wait_spawn: true }),
+      timeoutMs: 45000,
+    });
+    toast(t("toast.botCreated.title"), t("toast.botCreated.msg", { name: account }));
+    refreshBots();
+  } catch (e) {
+    toast(t("toast.createFail"), e.message, true);
+  } finally {
+    quickBtns.forEach((b) => (b.disabled = false));
+  }
+}
+document.querySelectorAll(".quick-create").forEach((btn) => {
+  btn.addEventListener("click", () => quickCreateBot(btn.dataset.preset));
+});
 
 $("create-form").addEventListener("submit", async (ev) => {
   ev.preventDefault();

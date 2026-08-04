@@ -180,6 +180,11 @@ const T = {
   "toast.botCreated.title": { en: "Bot created", zh: "已建立 bot" },
   "toast.botCreated.msg": { en: "{name} is connected.", zh: "{name} 已連線。" },
   "toast.createFail": { en: "Could not create bot", zh: "無法建立 bot" },
+  "toast.presetNumberRequired.title": { en: "No. required", zh: "需要編號" },
+  "toast.presetNumberRequired.msg": {
+    en: "Type a number in the \"No.\" field first.",
+    zh: "請先在「編號」欄位輸入數字。",
+  },
   "toast.createTimeout": {
     en: "Bot did not spawn in time — it may have been kicked before the stage started. Check the bot card for the reason.",
     zh: "bot 沒有及時進入世界——可能在關卡開始前就被踢出。請看 bot 卡片上的原因。",
