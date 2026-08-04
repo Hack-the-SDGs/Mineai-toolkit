@@ -18,7 +18,7 @@ from control_api import register_routes
 from event_log import log
 from http_logging import HTTPActivityMiddleware
 from mcp_logging import ActivityMiddleware
-from tools import interaction, lifecycle, movement, pathfinder, sensors
+from tools import interaction, lifecycle, movement, pathfinder, prompts, sensors
 
 # Where the MCP endpoint lives. opencode connects to http://<host>:<port>/mcp.
 MCP_PATH = "/mcp"
@@ -44,6 +44,7 @@ def init_server() -> FastMCP:
     movement.register(mcp_server)
     interaction.register(mcp_server)
     pathfinder.register(mcp_server)
+    prompts.register(mcp_server)
 
     register_routes(mcp_server)
     return mcp_server
