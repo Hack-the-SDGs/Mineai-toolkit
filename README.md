@@ -142,14 +142,18 @@ Lifecycle inspection tools:
 - `get_active_bot`
 - `set_active_bot(bot_name)`
 
-Pathfinder tools:
+Navigation uses `mineflayer-pathfinder`. `getPathTo` plans the route (no
+digging), and **every plan is logged** — its status, cost, search counts and the
+full path array — under the `mineai.pathfinder` logger, so a failed goto can be
+diagnosed from the log (see `MINEAI_LOG_FILE` / `MINEAI_LOG_LEVEL`) rather than
+guessed at. Planning budget is `MINEAI_PATHFINDER_PLAN_MS` (default 5000).
 
+- `pathfinder_goto(x, y, z, bot_name?)` — plan then walk to a coordinate. For an empty target cell it stands **on** it (`mode: on`); for an occupied cell it stands **beside** it and faces it (`mode: beside`). Does not move if there's no route (`arrived: false` with the plan `status`).
+- `pathfinder_check_path(x, y, z, include_path?, bot_name?)` — plan the same route without moving; returns `reachable`, `mode`, `status` (`success`/`partial`/`noPath`/`timeout`), `end`, and the `path` array. Use it to see *why* a goto would fail.
 - `load_pathfinder(bot_name?)`
 - `pathfinder_status(bot_name?)`
 - `pathfinder_stop(bot_name?)`
 - `pathfinder_clear_goal(bot_name?)`
-- `pathfinder_goto(x, y, z, bot_name?)` — reach a coordinate along its real route: stand on an empty target, or beside-and-facing an occupied one; never a radius. Does not move if there's no route.
-- `pathfinder_check_path(x, y, z, timeout_ms?, include_path?, bot_name?)` — plan the same route without moving and report reachability
 - `pathfinder_set_goal_near(x, y, z, radius?, dynamic?, bot_name?)`
 - `pathfinder_set_goal_block(x, y, z, dynamic?, bot_name?)`
 
@@ -157,10 +161,10 @@ Pathfinding never breaks blocks: the pathfinder runs with `canDig` disabled, so
 it routes around obstacles instead of tunnelling through them.
 
 Blocking commands are bounded by an MCP-side timeout — `MINEAI_PATHFINDER_TIMEOUT`
-(default 300s) for the `pathfinder_goto_*` tools and `MINEAI_TOOL_TIMEOUT`
-(default 180s) for every other action tool. On timeout the tool stops waiting,
-clears the pathfinder goal so the bot doesn't keep moving, and returns a
-`timeout after Ns: ...` message instead of raising. If the MCP client's own
+(default 300s) for `pathfinder_goto` and `MINEAI_TOOL_TIMEOUT` (default 180s) for
+every other action tool. On timeout the tool stops waiting, clears the pathfinder
+goal so the bot doesn't keep moving, and returns a `timeout after Ns: ...` message
+instead of raising. If the MCP client's own
 request timeout is shorter and fires first, the goal is still cleared (the bot
 stops) before the cancellation is surfaced to the client.
 

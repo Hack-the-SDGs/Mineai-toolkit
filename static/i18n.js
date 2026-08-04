@@ -261,8 +261,8 @@ const TOOL_DESC = {
   pathfinder_status: "回傳 pathfinder 的移動／挖掘／建造狀態。",
   pathfinder_stop: "取消目前的 pathfinder 任務並停止移動。",
   pathfinder_clear_goal: "清除目前的 pathfinder 目標。",
-  pathfinder_goto: "沿真實路徑抵達 (x, y, z)：目標是空氣就站上去，是方塊就走到旁邊並面向它以便挖掘／使用／放置。無路徑則不移動並回報卡住位置。不使用半徑。",
-  pathfinder_check_path: "只規劃路徑但不移動，回報目標是否可抵達（reachable、status、mode、path 等）；在 goto 前先用它驗證。",
+  pathfinder_goto: "用 mineflayer-pathfinder 規劃並走到 (x, y, z)：目標是空氣就站上去（on），是方塊就走到旁邊並面向它以便挖掘／使用／放置（beside）。無路徑則不移動並回報 status。規劃出的路徑會寫入 log。",
+  pathfinder_check_path: "只規劃路徑但不移動，回報是否可抵達（reachable、status、mode、end、path）；用來診斷 goto 為何失敗。路徑也會寫入 log。",
   pathfinder_set_goal_near: "設定一個在 ``(x, y, z)`` 附近的背景 pathfinder 目標。",
   pathfinder_set_goal_block: "為某個精確方塊設定背景 pathfinder 目標。",
   // interaction

@@ -32,26 +32,32 @@ and the world state.
 - **`place` needs a block in hand AND a face to place against.** `hold(block)`
   first, confirm with `get_hand`, aim at a solid face, then `place()`. `place`
   returns `none` when there is nothing to place against.
-- **Load the pathfinder once per bot before any goto.** Call
-  `load_pathfinder()`, then check `pathfinder_status`. The pathfinder **never
-  digs** (it routes around obstacles) — a "no path" result means blocked, not
-  "try again".
-- **There is one goto: `pathfinder_goto(x, y, z)`.** No radius, no variants to
-  choose between. It follows the *real* A* route and drives with an **exact**
-  goal to the route's last cell — so it never stops on a "within radius" cell on
-  the wrong side of a fence, and never parks in a corner. It adapts to the
-  target automatically and tells you which in `mode`:
-  - **Empty target cell** (air) → stands **on** it (`mode: "on"`). For travel.
-  - **Occupied cell** (a block you'll dig/use/place) → stands **beside** it via
-    the route and turns to face it (`mode: "beside"`, `facing_target: true`).
-  When there is no route it returns `arrived: false` with `stalled_at` and does
-  **not** move — that means "unreachable, switch target", never "retry".
-- **Check the path before you walk it.** `pathfinder_check_path(x, y, z)` plans
-  the *same* route `pathfinder_goto` would, without moving the bot, and returns
-  `reachable`. Use it before a goto to any target that might be walled off — the
-  classic trap is a one-block spot separated by fences: the coords match but no
-  route exists. `reachable: false` (status `partial`/`noPath`) means pick a
-  different target, don't launch the goto.
+- **Load the pathfinder once per bot before any goto.** Call `load_pathfinder()`
+  first. The pathfinder **never digs** (it routes around obstacles) — a "no
+  path" result means blocked, not "try again".
+- **There is one goto: `pathfinder_goto(x, y, z)`.** It plans the route with
+  `mineflayer-pathfinder`, then drives to the route's last node — no radius, no
+  variants. It adapts to the target and tells you which in `mode`:
+  - **Empty target cell** (`mode: "on"`) → stands **on** it. For travel.
+  - **Occupied cell** you'll dig/use/place (`mode: "beside"`) → stands **beside**
+    it and faces it (`facing_target: true`), ready to act.
+  When there is no route at all it returns `arrived: false` with `status`
+  (`noPath`/`timeout`) and does **not** move — "unreachable, switch target",
+  never "retry".
+  - For a stand-on target the planner stops just short of (a fence corner, a
+    half-slab step — which `mineflayer-pathfinder` won't plan but the bot *can*
+    walk), goto **finishes with plain cardinal steps** (walk → turn → walk,
+    routing around fences) and returns `arrived: true, status: "success_manual"`.
+    Treat it like any arrival.
+  - If even that can't finish, it returns `arrived: false, status:
+    "stopped_short"` with where it parked — switch target rather than retry.
+- **Check the path — and read the log — to see *why* a goto fails.**
+  `pathfinder_check_path(x, y, z)` plans the *same* route without moving and
+  returns `reachable`, `mode`, `status`, `end`, and the full `path` array. Every
+  plan is also logged (`mineai.pathfinder`): `status: noPath` = walled off,
+  `partial` = blocked partway (`end` shows how far), `timeout` = search ran out
+  of budget. `reachable: false` means pick a different target, don't launch the
+  goto.
 - **Know which bot you are driving.** If unsure, `get_active_bot` /
   `list_bots`. If no bot is active, stop and say so — do not guess a `bot_name`.
 - **Read the return string.** Tools return `'none'`, `'empty'`, `True`/`False`,
@@ -98,25 +104,27 @@ This is general. It applies to digging, to `place` (needs a valid face), to
 Stuck ≠ dead end. Work **down** this ladder; stop as soon as one step works. Only
 after the whole ladder fails do you switch targets (the rule above).
 
-1. **Confirm it's really stuck.** `pathfinder_status` + `get_pos`. If position is
-   still changing, it is mid-route — wait, don't interrupt.
-2. **Did `pathfinder_goto` return `arrived: false`?** Then it already found no
-   route and **did not move** — this is not a stuck bot, it's an unreachable
-   target. Skip to step 4; do not re-issue the same goto.
+1. **Read the goto result.** `pathfinder_goto` returns a dict, not a guess.
+   Check `arrived` first.
+2. **`arrived: false`?** The target is unreachable — this is not a stuck bot.
+   `status` says why: `noPath` = walled off, `partial` = blocked partway,
+   `timeout` = search budget spent (never moved), `stopped_short` = it walked
+   but the pathfinder parked near without reaching (a fence between / blocked
+   final step). The `mineai.pathfinder` log has the full planned path. Skip to
+   step 4; do not re-issue the same goto.
 3. **`arrived: true` but you still can't act?** Check `mode` and `facing_target`.
-   If `mode: "beside"` but `facing_target: false`, the block moved out of line of
-   sight — re-`look_at(x, y, z)` and re-check `get_block_in_front`. Close any
-   last sub-block gap manually: `move_forward(1)`, then re-aim.
-4. **It's a wall.** No route exists (pathfinder won't dig). Confirm with
-   `pathfinder_check_path(x, y, z)` — a `partial`/`noPath` status proves it's a
-   wall, not a slow route, and its `end` shows how far a route gets before the
-   obstacle. Then `pathfinder_clear_goal`, apply reachability → `find_blocks` and
-   pick the nearest reachable alternative.
+   If `mode: "beside"` but `facing_target: false`, line of sight is off —
+   re-`look_at(x, y, z)` and re-check `get_block_in_front`. Close any last
+   sub-block gap manually: `move_forward(1)`, then re-aim.
+4. **It's walled off.** Confirm with `pathfinder_check_path(x, y, z)` —
+   `status: partial`/`noPath` proves no route exists (and `end` shows how far a
+   route gets). Then apply reachability → `find_blocks` and pick the nearest
+   reachable alternative.
 
 One line to hold onto:
 
-> **Stuck: `arrived:false` means switch targets, not retry; `facing_target:false`
-> means re-aim; a wall means enumerate alternatives.**
+> **Stuck: `arrived:false` means switch targets, not retry; `beside` +
+> `facing_target:false` means re-aim; the log shows the planned path.**
 
 ## Quick Reference
 
@@ -137,10 +145,10 @@ Optional `bot_name` on every action tool — omit it to use the active bot.
 | `get_block_in_front` | `coords, name` or `none` | Solid block one step ahead |
 | `find_block(name)` | coords | Nearest block by name |
 | `find_blocks(name, max=16)` | list, closest first, or `empty` | N nearest blocks |
-| `load_pathfinder` / `pathfinder_status` | status | Enable / inspect pathfinder |
-| `pathfinder_check_path(x, y, z, timeout_ms=5000, include_path=True)` | `{reachable, status, mode, path_length, cost, end, path}` | Plan the goto's route **without moving** — test reachability first |
+| `load_pathfinder` / `pathfinder_status` | status | Enable / inspect pathfinder (call `load_pathfinder` once per bot) |
+| `pathfinder_goto(x, y, z)` | `{arrived, mode, status, facing_target, stood_at, stalled_at, …}` | **The goto.** Plans + walks — `on` (stand on an empty target) or `beside` (stand beside+facing a block); doesn't move if no route. Path is logged |
+| `pathfinder_check_path(x, y, z, include_path=True)` | `{reachable, status, mode, end, path}` | Plan the goto's route **without moving** — see *why* it would fail; also logged |
 | `pathfinder_stop` / `pathfinder_clear_goal` | — | Halt / drop current goal |
-| `pathfinder_goto(x, y, z)` | `{arrived, mode, facing_target, stood_at, stalled_at, …}` | **The goto.** Real route, exact — stands *on* an empty target or *beside*+facing an occupied one; doesn't move if no route |
 | `move_forward(blocks=1)` | position | Walk; also `move_backward/left/right` |
 | `jump` | position | Jump once |
 | `turn(degrees)` | orientation | Relative turn (+ = left) |
@@ -167,12 +175,12 @@ Goal: get one oak_log.
 
 find_block("oak_log")               -> 10 64 20   (nearest)
 load_pathfinder()
-pathfinder_check_path(10, 64, 20)   -> reachable: false, status: partial, end: [9,64,18]
+pathfinder_check_path(10, 64, 20)   -> reachable: false, status: noPath   (log shows the planned path)
     # walled off by fences — never even start the goto. Mark (10,64,20) failed.
 
 find_blocks("oak_log", 8)           -> [ (10 64 20), (18 63 5), ... ]  closest first
     # skip (10,64,20) — already failed
-pathfinder_check_path(18, 63, 5)    -> reachable: true, mode: beside
+pathfinder_check_path(18, 63, 5)    -> reachable: true, mode: beside, end: [18,63,6]
 pathfinder_goto(18, 63, 5)          -> arrived: true, mode: beside, facing_target: true
 get_block_in_front                  -> 18 63 5, oak_log   (aim confirmed)
 hold("wooden_axe")                  -> True
@@ -200,11 +208,11 @@ get_block(12, 65, 8)                -> cobblestone        (verified)
 |---------|-----|
 | `dig` / `place` without aiming first | `look_block` / `get_block_in_front` to confirm the target, then act |
 | Retrying the same unreachable block | `find_blocks`, skip the failed coord, take the nearest reachable one |
-| A goto toward a fenced-off block that stalls | `pathfinder_check_path` first; only goto when `reachable` is true |
+| A goto toward a fenced-off block | `pathfinder_check_path` first; only goto when `reachable` is true |
 | Retrying `pathfinder_goto` after `arrived: false` | It already found no route and didn't move — switch target, don't retry |
+| Guessing why a goto failed | Read `status` / the `mineai.pathfinder` log — `noPath` vs `partial` vs `timeout` tells you the cause |
 | Acting after `arrived: true` without checking `facing_target` | For `mode: "beside"`, confirm `facing_target` / `get_block_in_front` before dig/use/place |
 | A goto before `load_pathfinder` | Load the pathfinder once per bot first |
-| Treating "no path" as "retry" | It's blocked (pathfinder never digs) — switch target |
 | Treating a `timeout` return as a crash | Goal is already cleared and bot stopped — re-sense, then decide |
 | `place` with an empty hand | `hold(block)` and confirm with `get_hand` first |
 | Ignoring the return string | Every tool tells you what happened — read it before the next step |

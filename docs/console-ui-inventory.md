@@ -143,7 +143,7 @@
 | pathfinder_stop | bot_name(text, 選填) |
 | pathfinder_clear_goal | bot_name(text, 選填) |
 | pathfinder_goto | **x, y, z(number, 必填 ×3)**、bot_name(text, 選填) |
-| pathfinder_check_path | **x, y, z(number, 必填 ×3)**、timeout_ms(number, 預設 5000)、include_path(boolean, 預設 true)、bot_name(text, 選填) |
+| pathfinder_check_path | **x, y, z(number, 必填 ×3)**、include_path(boolean, 預設 true)、bot_name(text, 選填) |
 | pathfinder_set_goal_near | **x, y, z(number, 必填 ×3)**、radius(number, 預設 1.0)、dynamic(boolean, 預設 false)、bot_name(text, 選填) |
 | pathfinder_set_goal_block | **x, y, z(number, 必填 ×3)**、dynamic(boolean, 預設 false)、bot_name(text, 選填) |
 
