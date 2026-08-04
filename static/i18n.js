@@ -276,6 +276,7 @@ const TOOL_DESC = {
   use_player: "對指定玩家的實體按右鍵（例如騎乘／堆疊）；成功回傳 True。",
   sneak: "按住（``on=True``）或放開（``on=False``）潛行；回傳新的狀態。",
   action: "請 quest server 執行某個具名動作（例如 'put out'）。",
+  put_out: "執行『put out』（滅火）這個 quest 動作，等同呼叫 action 並固定帶入 name='put out'；``value`` 為可選的整數參數。",
   chat: "向伺服器發送一則聊天訊息。",
   set_height: "設定 bot 體型等級，1 到 5。",
   // sensors
